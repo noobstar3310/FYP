@@ -3,6 +3,6 @@ export type ERC20Holding = {
   symbol: string;
   name: string;
   decimals: number;
-  balance: number;
+  balance: string;
   usdValue: number;
 }; 

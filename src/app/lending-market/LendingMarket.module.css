@@ -1,0 +1,178 @@
+/* Light mode Swiss Design-inspired styles */
+.page {
+  min-height: 100vh;
+  background-color: #000000;
+  color: #000000;
+}
+
+.navbar {
+  width: 100%;
+  height: 64px;
+  border-bottom: 1px solid #1A1A1A;
+}
+
+.navContent {
+  max-width: 1200px;
+  height: 100%;
+  margin: 0 auto;
+  padding: 0 2rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.logo {
+  font-size: 1.25rem;
+  color: #FFFFFF;
+  font-weight: 400;
+}
+
+.navRight {
+  display: flex;
+  gap: 1.5rem;
+  align-items: center;
+  color: #FFFFFF;
+}
+
+.address {
+  padding: 0.5rem 1rem;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+}
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 2rem;
+  background-color: #FFFFFF;
+  border-radius: 16px;
+  margin-top: 2rem;
+}
+
+.title {
+  font-size: 2rem;
+  font-weight: 400;
+  color: #000000;
+  margin: 0 0 2rem 0;
+}
+
+.metricsCard {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2rem;
+  padding: 2rem;
+  background-color: #FFFFFF;
+  border: 1px solid #EAEAEA;
+  border-radius: 8px;
+  margin-bottom: 2rem;
+}
+
+.metric {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.metricLabel {
+  font-size: 0.75rem;
+  color: #666666;
+  letter-spacing: 0.05em;
+}
+
+.metricValue {
+  font-size: 1.75rem;
+  font-weight: 400;
+  color: #000000;
+}
+
+.progressBar {
+  height: 4px;
+  background-color: #EAEAEA;
+  margin-top: 0.5rem;
+  border-radius: 2px;
+}
+
+.progressBarFill {
+  height: 100%;
+  background-color: #2E7D32;
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.positionsGrid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 2rem;
+}
+
+.card {
+  background-color: #FFFFFF;
+  border: 1px solid #EAEAEA;
+  border-radius: 8px;
+  padding: 1.5rem;
+}
+
+.cardTitle {
+  font-size: 1rem;
+  font-weight: 400;
+  color: #000000;
+  margin: 0 0 1.5rem 0;
+}
+
+.assetList {
+  display: flex;
+  flex-direction: column;
+}
+
+.assetRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr auto;
+  align-items: center;
+  padding: 1rem 0;
+  border-bottom: 1px solid #EAEAEA;
+}
+
+.assetRow:last-child {
+  border-bottom: none;
+}
+
+.assetSymbol {
+  font-weight: 500;
+  color: #000000;
+}
+
+.assetBalance {
+  color: #000000;
+}
+
+.assetApy {
+  color: #666666;
+}
+
+.actionButton {
+  font-family: inherit;
+  font-size: 0.875rem;
+  font-weight: 400;
+  padding: 0.5rem 1.25rem;
+  border: 1px solid #000000;
+  border-radius: 4px;
+  background: transparent;
+  color: #000000;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.actionButton:hover {
+  background-color: #000000;
+  color: #FFFFFF;
+}
+
+.actionButton.secondary {
+  border-color: #666666;
+  color: #666666;
+}
+
+.actionButton.secondary:hover {
+  background-color: #666666;
+  color: #FFFFFF;
+} 

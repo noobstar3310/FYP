@@ -2,10 +2,10 @@ import { getWalletAge, calculateWalletAgeScore } from "../wallet-age-and-activit
 import { type UserAccountData } from "../aave-positions/read-aave";
 import { calculateCreditScore } from "../aave-positions/calculate-credit-score";
 import { isAddress } from "viem";
+import { type ERC20Holding } from "../erc20-holdings/types";
+import { type DefiPosition } from "../wallet-defi-activities/types";
 import { calculateErc20Score } from "../erc20-holdings/calculateErc20Score";
 import { calculateDefiCreditScore } from "../wallet-defi-activities/defi-position-credit-score";
-import type { ERC20Holding } from "../erc20-holdings/types";
-import type { DefiPosition } from "../wallet-defi-activities/types";
 
 // Score weights
 export const SCORE_WEIGHTS = {
@@ -34,7 +34,7 @@ export type FinalScore = {
 
 export async function calculateFinalScore(
   address: string,
-  aaveData: UserAccountData | undefined,
+  aaveData: [bigint, bigint, bigint, bigint, bigint, bigint] | undefined,
   erc20Holdings: ERC20Holding[],
   defiPositions: DefiPosition[]
 ): Promise<FinalScore> {
@@ -55,7 +55,15 @@ export async function calculateFinalScore(
     // Calculate Aave credit score
     let aaveScore = 0;
     if (aaveData) {
-      const creditScoreResult = calculateCreditScore(aaveData);
+      const accountData: UserAccountData = {
+        totalCollateralBase: aaveData[0],
+        totalDebtBase: aaveData[1],
+        availableBorrowsBase: aaveData[2],
+        currentLiquidationThreshold: aaveData[3],
+        ltv: aaveData[4],
+        healthFactor: aaveData[5]
+      };
+      const creditScoreResult = calculateCreditScore(accountData);
       aaveScore = creditScoreResult.totalScore;
     }
 
@@ -66,12 +74,11 @@ export async function calculateFinalScore(
     const defiScore = calculateDefiCreditScore(defiPositions).totalScore;
 
     // Calculate weighted scores
-    const weightedWalletAge = addressAgeScore * SCORE_WEIGHTS.ADDRESS_AGE;
-    const weightedAaveScore = aaveScore * SCORE_WEIGHTS.CREDIT_SCORE;
-    const weightedErc20Score = erc20Score * SCORE_WEIGHTS.ERC20_HOLDINGS;
-    const weightedDefiScore = defiScore * SCORE_WEIGHTS.PARTICIPATION;
-
-    const totalScore = weightedWalletAge + weightedAaveScore + weightedErc20Score + weightedDefiScore;
+    const totalScore = 
+      (addressAgeScore * SCORE_WEIGHTS.ADDRESS_AGE) +
+      (aaveScore * SCORE_WEIGHTS.CREDIT_SCORE) +
+      (erc20Score * SCORE_WEIGHTS.ERC20_HOLDINGS) +
+      (defiScore * SCORE_WEIGHTS.PARTICIPATION);
 
     return {
       totalScore,
@@ -100,11 +107,9 @@ export function getRiskGrade(score: number): string {
 export function getRiskColor(grade: string): string {
   switch (grade) {
     case "EXCELLENT":
-      return "text-green-600";
     case "GOOD":
-      return "text-blue-600";
     case "MODERATE":
-      return "text-yellow-600";
+      return "text-black";
     case "RISKY":
     case "HIGH RISK":
       return "text-red-600";
