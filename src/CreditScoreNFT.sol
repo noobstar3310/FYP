@@ -12,7 +12,7 @@ contract CreditScoreNFT is ERC721 {
 
     // Mapping from token ID to credit data
     mapping(uint256 => CreditData) public creditScores;
-    
+
     // Counter for token IDs
     uint256 private _nextTokenId;
 
@@ -26,17 +26,14 @@ contract CreditScoreNFT is ERC721 {
         require(msg.sender == owner(), "Only lending protocol can mint");
         require(balanceOf(to) == 0, "User already has a credit score NFT");
         require(initialScore <= 100, "Invalid credit score range"); // Score must be between 0-100
-        
+
         uint256 tokenId = _nextTokenId++;
 
         _safeMint(to, tokenId);
-        
+
         // Initialize credit score data with provided score
-        creditScores[tokenId] = CreditData({
-            creditScore: initialScore,
-            lastUpdated: block.timestamp,
-            isCollateralized: false
-        });
+        creditScores[tokenId] =
+            CreditData({creditScore: initialScore, lastUpdated: block.timestamp, isCollateralized: false});
 
         return tokenId;
     }
@@ -45,7 +42,7 @@ contract CreditScoreNFT is ERC721 {
         require(msg.sender == owner(), "Only lending protocol can burn");
         require(ownerOf(tokenId) == owner(), "NFT must be owned by protocol");
         require(!creditScores[tokenId].isCollateralized, "Token is currently used as collateral");
-        
+
         delete creditScores[tokenId];
         _burn(tokenId);
     }
@@ -89,4 +86,4 @@ contract CreditScoreNFT is ERC721 {
     function owner() public view returns (address) {
         return msg.sender;
     }
-} 
+}

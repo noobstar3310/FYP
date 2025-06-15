@@ -1,66 +1,127 @@
-## Foundry
+# 🏦 DeFi Lending Protocol with Credit Score NFTs
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
+A revolutionary DeFi lending protocol that introduces on-chain credit scoring through non-transferable NFTs, enabling better loan terms for reliable borrowers.
 
-Foundry consists of:
+## 🌟 Features
 
--   **Forge**: Ethereum testing framework (like Truffle, Hardhat and DappTools).
--   **Cast**: Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
--   **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
--   **Chisel**: Fast, utilitarian, and verbose solidity REPL.
+### Credit Score System
+- 📈 Scores range from 0-100
+- 🎯 Dynamic scoring based on repayment behavior:
+  - ⚡ Early repayment (≤30 days): +5 points
+  - ⏰ Slight delay (31-45 days): -2 points
+  - ⚠️ Late repayment (>45 days): -10 points
+- 💰 Additional bonuses for repayment amounts:
+  - 10+ ETH: +3 points
+  - 5+ ETH: +2 points
+  - 1+ ETH: +1 point
 
-## Documentation
+### Collateralization System
+- 🔒 Base collateral ratio: 150%
+- 🛡️ Minimum collateral ratio: 110%
+- 💎 Credit score-based discounts:
+  - 90-100: 30% discount
+  - 80-89: 25% discount
+  - 70-79: 20% discount
+  - 60-69: 15% discount
+  - 50-59: 10% discount
+  - 40-49: 5% discount
+  - Below 40: No discount
+- 🆕 No credit score? No problem! Borrow with 200% collateral
 
-https://book.getfoundry.sh/
+## 🛠 Technical Stack
 
-## Usage
+- **Smart Contracts**: Solidity ^0.8.19
+- **Development Framework**: Foundry
+- **Testing**: Forge
+- **Dependencies**: OpenZeppelin Contracts
 
-### Build
+## 📦 Installation
 
-```shell
-$ forge build
+1. Clone the repository
+```bash
+git clone <your-repo-url>
+cd fyp-contracts
 ```
 
-### Test
-
-```shell
-$ forge test
+2. Install dependencies
+```bash
+make install
 ```
 
-### Format
-
-```shell
-$ forge fmt
+3. Build the project
+```bash
+make build
 ```
 
-### Gas Snapshots
+## 🚀 Deployment
 
-```shell
-$ forge snapshot
+1. Set up your environment variables in `.env`:
+```bash
+SEPOLIA_RPC_URL=your_rpc_url
+ETHERSCAN_API_KEY=your_api_key
+SEPOLIA_VERIFIER_URL=https://api-sepolia.etherscan.io/api
 ```
 
-### Anvil
-
-```shell
-$ anvil
+2. Deploy the LendingProtocol:
+```bash
+make deploy-lending-protocol
 ```
 
-### Deploy
-
-```shell
-$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
+3. Verify the CreditScoreNFT contract:
+```bash
+NFT_CONTRACT=<deployed-nft-address> make verify-nft-contract
 ```
 
-### Cast
+## 🔍 Contract Addresses (Sepolia)
 
-```shell
-$ cast <subcommand>
+- LendingProtocol: [0xf44daB7702Fde62583A941BCA8e60dC3069f9663](https://sepolia.etherscan.io/address/0xf44dab7702fde62583a941bca8e60dc3069f9663)
+- CreditScoreNFT: [0x95cC2E9A1851b3294Ed7DCA77351f7ED84375e53](https://sepolia.etherscan.io/address/0x95cc2e9a1851b3294ed7dca77351f7ed84375e53)
+
+## 💡 Usage
+
+### For Lenders
+1. Deposit ETH into the lending pool:
+```solidity
+function deposit() external payable
 ```
 
-### Help
-
-```shell
-$ forge --help
-$ anvil --help
-$ cast --help
+### For Borrowers
+1. Mint a credit score NFT (optional):
+```solidity
+function mintCreditScore(uint256 _initialCreditScore) external
 ```
+
+2. Deposit collateral:
+```solidity
+function depositOrCollateralize() external payable
+```
+
+3. Borrow ETH:
+```solidity
+function borrow(uint256 _weiAmount, uint256 _creditScoreTokenId) external
+```
+
+4. Repay loan:
+```solidity
+function repay() external payable
+```
+
+## 🔐 Security Features
+
+- ✅ Non-transferable credit score NFTs
+- 🛡️ Reentrancy protection
+- 🔒 Ownership controls
+- 💪 Robust collateralization system
+- 🎯 Precise interest calculations
+
+## 🤝 Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## ⚠️ Disclaimer
+
+This protocol is part of a final year project and is not audited. Use at your own risk.

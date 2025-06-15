@@ -6,6 +6,18 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import "./CreditScoreNFT.sol";
 
 contract LendingProtocol is ReentrancyGuard, Ownable {
+    // errors
+    error LendingProtocol__InvalidCreditScore();
+    error LendingProtocol__CannotMintWhileHavingActiveLoan();
+    error LendingProtocol__UserAlreadyHasCreditScoreNFT();
+    error LendingProtocol__AmountMustBeGreaterThanOrEqualToZero();
+    error LendingProtocol__InsufficientLiquidity();
+    error LendingProtocol__NotOwnerOfCreditScoreNFT();
+    error LendingProtocol__AlreadyCollateralized();
+    error LendingProtocol__InsufficientCollateral();
+    error LendingProtocol__NoActiveLoan();
+
+    // structs
     struct LendingPool {
         uint256 totalDeposited;
         uint256 totalBorrowed;
@@ -17,6 +29,12 @@ contract LendingProtocol is ReentrancyGuard, Ownable {
         uint256 collateralAmount;
         uint256 creditScoreTokenId;
         uint256 lastInterestUpdate;
+    }
+
+    // Credit score thresholds and their corresponding collateral discounts (in basis points)
+    struct CreditThreshold {
+        uint256 score;
+        uint256 discount;
     }
 
     // Credit Score NFT contract
@@ -33,12 +51,6 @@ contract LendingProtocol is ReentrancyGuard, Ownable {
     uint256 private constant MIN_COLLATERAL_RATIO = 11000; // 110% in basis points
     uint256 private constant BASIS_POINTS = 10000;
 
-    // Credit score thresholds and their corresponding collateral discounts (in basis points)
-    struct CreditThreshold {
-        uint256 score;
-        uint256 discount;
-    }
-
     // Array of credit thresholds (ordered from highest to lowest score)
     CreditThreshold[] public creditThresholds;
 
@@ -52,115 +64,133 @@ contract LendingProtocol is ReentrancyGuard, Ownable {
     event CreditScoreMinted(address indexed user, uint256 tokenId);
     event CreditScoreBurned(address indexed user, uint256 tokenId);
 
+    modifier checkAmountMoreThanZeroAndLessThanAvailableLiquidity(uint256 _weiAmount) {
+        if (_weiAmount <= 0) {
+            revert LendingProtocol__AmountMustBeGreaterThanOrEqualToZero();
+        } if (_weiAmount > getAvailableLiquidity()) {
+            revert LendingProtocol__InsufficientLiquidity();
+        }
+        _;
+    }
+
     constructor() Ownable(msg.sender) {
         // Deploy the CreditScoreNFT contract
         creditScoreNFT = new CreditScoreNFT();
-        
+
         // Initialize pool with 5% interest rate
         pool.interestRate = 500;
 
         // Initialize credit score thresholds and their discounts
-        creditThresholds.push(CreditThreshold({score: 90, discount: 3000}));  // 90+ score = 30% discount
-        creditThresholds.push(CreditThreshold({score: 80, discount: 2500}));  // 80-89 score = 25% discount
-        creditThresholds.push(CreditThreshold({score: 70, discount: 2000}));  // 70-79 score = 20% discount
-        creditThresholds.push(CreditThreshold({score: 60, discount: 1500}));  // 60-69 score = 15% discount
-        creditThresholds.push(CreditThreshold({score: 50, discount: 1000}));  // 50-59 score = 10% discount
-        creditThresholds.push(CreditThreshold({score: 40, discount: 500}));   // 40-49 score = 5% discount
-        // Below 40 = no discount
+        creditThresholds.push(CreditThreshold({score: 90, discount: 3000})); // 90+ score = 30% discount
+        creditThresholds.push(CreditThreshold({score: 80, discount: 2500})); // 80-89 score = 25% discount
+        creditThresholds.push(CreditThreshold({score: 70, discount: 2000})); // 70-79 score = 20% discount
+        creditThresholds.push(CreditThreshold({score: 60, discount: 1500})); // 60-69 score = 15% discount
+        creditThresholds.push(CreditThreshold({score: 50, discount: 1000})); // 50-59 score = 10% discount
+        creditThresholds.push(CreditThreshold({score: 40, discount: 500})); // 40-49 score = 5% discount
+            // Below 40 = no discount
     }
 
-    function mintCreditScore(uint256 initialScore) external returns (uint256) {
+    function mintCreditScore(uint256 _initialCreditScore) external returns (uint256) {
         // Validate initial score
-        require(initialScore <= 100, "Invalid credit score: must be between 0-100");
-        
-        // Only allow minting if user doesn't have an active loan
-        require(positions[msg.sender].borrowed == 0, "Cannot mint while having active loan");
-        
-        // Check if user already has a credit score NFT
-        require(creditScoreNFT.balanceOf(msg.sender) == 0, "User already has a credit score NFT");
-        
+        if (_initialCreditScore >= 100 || _initialCreditScore < 0) {
+            revert LendingProtocol__InvalidCreditScore();
+        } if (positions[msg.sender].borrowed != 0) {
+            revert LendingProtocol__CannotMintWhileHavingActiveLoan();
+        } if (creditScoreNFT.balanceOf(msg.sender) != 0) {
+            revert LendingProtocol__UserAlreadyHasCreditScoreNFT();
+        }
+
         // Mint new credit score NFT with initial score
-        uint256 tokenId = creditScoreNFT.mint(msg.sender, initialScore);
+        uint256 tokenId = creditScoreNFT.mint(msg.sender, _initialCreditScore);
         emit CreditScoreMinted(msg.sender, tokenId);
         return tokenId;
     }
 
-    function deposit() external payable nonReentrant {
-        require(msg.value > 0, "Amount must be greater than 0");
-        
+    function depositOrCollateralize() external payable nonReentrant {
+        if (msg.value <= 0) {
+            revert LendingProtocol__AmountMustBeGreaterThanOrEqualToZero();
+        }
         pool.totalDeposited += msg.value;
+        positions[msg.sender].collateralAmount += msg.value;
         emit Deposited(msg.sender, msg.value);
     }
 
-    function withdraw(uint256 amount) external nonReentrant {
-        require(amount > 0, "Amount must be greater than 0");
-        require(amount <= getAvailableLiquidity(), "Insufficient liquidity");
-        
-        pool.totalDeposited -= amount;
-        (bool success, ) = payable(msg.sender).call{value: amount}("");
+    function withdraw(uint256 _weiAmount) external nonReentrant checkAmountMoreThanZeroAndLessThanAvailableLiquidity(_weiAmount) {
+
+        pool.totalDeposited -= _weiAmount;
+        (bool success,) = payable(msg.sender).call{value: _weiAmount}("");
         require(success, "ETH transfer failed");
-        
-        emit Withdrawn(msg.sender, amount);
+
+        emit Withdrawn(msg.sender, _weiAmount);
     }
 
-    function borrow(uint256 amount, uint256 creditScoreTokenId) external payable nonReentrant {
-        require(amount > 0, "Amount must be greater than 0");
-        require(amount <= getAvailableLiquidity(), "Insufficient liquidity");
-
+    function borrow(uint256 _weiAmount, uint256 _creditScoreTokenId) external payable nonReentrant checkAmountMoreThanZeroAndLessThanAvailableLiquidity (_weiAmount) {
         uint256 requiredCollateral;
-        bool hasNFT = creditScoreTokenId != 0;
+        bool hasNFT;
+        if (_creditScoreTokenId != 0) {
+            hasNFT = true;
+        } else {
+            hasNFT = false;
+        }
 
         if (hasNFT) {
             // Verify credit score NFT ownership
-            require(creditScoreNFT.ownerOf(creditScoreTokenId) == msg.sender, "Not owner of credit score NFT");
-            
+            if (creditScoreNFT.ownerOf(_creditScoreTokenId) != msg.sender) {
+                revert LendingProtocol__NotOwnerOfCreditScoreNFT();
+            }
+
             // Get credit score data
-            CreditScoreNFT.CreditData memory creditData = creditScoreNFT.getCreditData(creditScoreTokenId);
-            require(!creditData.isCollateralized, "Credit score already collateralized");
+            CreditScoreNFT.CreditData memory creditData = creditScoreNFT.getCreditData(_creditScoreTokenId);
+            if (creditData.isCollateralized) {
+                revert LendingProtocol__AlreadyCollateralized();
+            }
 
             // Calculate required collateral based on credit score
-            requiredCollateral = calculateRequiredCollateral(amount, creditData.creditScore);
-            
+            requiredCollateral = calculateRequiredCollateral(_weiAmount, creditData.creditScore);
+
             // Transfer NFT to protocol
-            creditScoreNFT.transferFrom(msg.sender, address(this), creditScoreTokenId);
-            
+            creditScoreNFT.transferFrom(msg.sender, address(this), _creditScoreTokenId);
+
             // Mark credit score as collateralized
-            creditScoreNFT.setCollateralStatus(creditScoreTokenId, true);
+            creditScoreNFT.setCollateralStatus(_creditScoreTokenId, true);
         } else {
             // For users without NFT, require full collateralization (200%)
-            requiredCollateral = (amount * 20000) / BASIS_POINTS; // 200% collateral ratio
+            requiredCollateral = (_weiAmount * 20000) / BASIS_POINTS; // 200% collateral ratio
         }
 
-        require(msg.value >= requiredCollateral, "Insufficient collateral");
-        
+        if (positions[msg.sender].collateralAmount < requiredCollateral) {
+            revert LendingProtocol__InsufficientCollateral();
+        }
+
         // Update user position
-        positions[msg.sender].borrowed += amount;
+        positions[msg.sender].borrowed += _weiAmount;
         positions[msg.sender].collateralAmount += msg.value;
         if (hasNFT) {
-            positions[msg.sender].creditScoreTokenId = creditScoreTokenId;
+            positions[msg.sender].creditScoreTokenId = _creditScoreTokenId;
         }
         positions[msg.sender].lastInterestUpdate = block.timestamp;
-        
-        pool.totalBorrowed += amount;
-        
+
+        pool.totalBorrowed += _weiAmount;
+
         // Transfer borrowed ETH to user
-        (bool success, ) = payable(msg.sender).call{value: amount}("");
+        (bool success,) = payable(msg.sender).call{value: _weiAmount}("");
         require(success, "ETH transfer failed");
-        
-        emit Borrowed(msg.sender, amount, msg.value);
+
+        emit Borrowed(msg.sender, _weiAmount, msg.value);
     }
 
-    function repay() external payable nonReentrant {
-        require(msg.value > 0, "Amount must be greater than 0");
+    function repay() external payable nonReentrant checkAmountMoreThanZeroAndLessThanAvailableLiquidity(msg.value) {
         UserPosition storage position = positions[msg.sender];
-        require(position.borrowed > 0, "No active loan");
+        if (position.borrowed <= 0) {
+            revert LendingProtocol__NoActiveLoan();
+        }
 
         uint256 interest = calculateInterest(position.borrowed, position.lastInterestUpdate);
         uint256 totalOwed = position.borrowed + interest;
-        
+
         uint256 repayAmount = msg.value > totalOwed ? totalOwed : msg.value;
         uint256 refund = msg.value - repayAmount;
-        
+
         position.borrowed = totalOwed - repayAmount;
         position.lastInterestUpdate = block.timestamp;
         pool.totalBorrowed -= repayAmount;
@@ -176,43 +206,39 @@ contract LendingProtocol is ReentrancyGuard, Ownable {
                 position.creditScoreTokenId = 0;
 
                 // Update credit score before burning
-                uint256 newScore = calculateNewCreditScore(
-                    tokenId,
-                    totalOwed,
-                    position.lastInterestUpdate
-                );
+                uint256 newScore = calculateNewCreditScore(tokenId, totalOwed, position.lastInterestUpdate);
                 creditScoreNFT.updateCreditScore(tokenId, newScore);
-                
+
                 // Unset collateral status and burn NFT
                 creditScoreNFT.setCollateralStatus(tokenId, false);
                 creditScoreNFT.burn(tokenId);
             }
-            
+
             // Return collateral
-            (bool successCollateral, ) = payable(msg.sender).call{value: collateralToReturn}("");
+            (bool successCollateral,) = payable(msg.sender).call{value: collateralToReturn}("");
             require(successCollateral, "Collateral return failed");
         }
-        
+
         // Return excess payment if any
         if (refund > 0) {
-            (bool successRefund, ) = payable(msg.sender).call{value: refund}("");
+            (bool successRefund,) = payable(msg.sender).call{value: refund}("");
             require(successRefund, "Refund transfer failed");
         }
-        
+
         emit Repaid(msg.sender, repayAmount);
     }
 
-    function calculateNewCreditScore(
-        uint256 tokenId,
-        uint256 totalRepaid,
-        uint256 loanStartTime
-    ) internal view returns (uint256) {
+    function calculateNewCreditScore(uint256 tokenId, uint256 totalRepaid, uint256 loanStartTime)
+        internal
+        view
+        returns (uint256)
+    {
         CreditScoreNFT.CreditData memory creditData = creditScoreNFT.getCreditData(tokenId);
         uint256 currentScore = creditData.creditScore;
-        
+
         // Calculate time taken to repay (in days)
         uint256 daysToRepay = (block.timestamp - loanStartTime) / 1 days;
-        
+
         // Calculate score adjustments based on repayment amount and time
         int256 scoreAdjustment = 0;
 
@@ -248,7 +274,7 @@ contract LendingProtocol is ReentrancyGuard, Ownable {
 
     function calculateRequiredCollateral(uint256 amount, uint256 creditScore) public view returns (uint256) {
         uint256 baseCollateral = (amount * BASE_COLLATERAL_RATIO) / BASIS_POINTS;
-        
+
         // Find the applicable discount based on credit score
         uint256 discount = 0;
         for (uint256 i = 0; i < creditThresholds.length; i++) {
@@ -257,10 +283,10 @@ contract LendingProtocol is ReentrancyGuard, Ownable {
                 break;
             }
         }
-        
+
         // Apply the discount
         uint256 discountedCollateral = baseCollateral - ((baseCollateral * discount) / BASIS_POINTS);
-        
+
         // Ensure minimum collateral ratio is maintained
         uint256 minCollateral = (amount * MIN_COLLATERAL_RATIO) / BASIS_POINTS;
         return max(discountedCollateral, minCollateral);
@@ -280,19 +306,13 @@ contract LendingProtocol is ReentrancyGuard, Ownable {
         pool.interestRate = newRate;
     }
 
-    function getUserPosition(address user) external view returns (
-        uint256 borrowed,
-        uint256 collateralAmount,
-        uint256 creditScoreTokenId,
-        uint256 lastInterestUpdate
-    ) {
+    function getUserPosition(address user)
+        external
+        view
+        returns (uint256 borrowed, uint256 collateralAmount, uint256 creditScoreTokenId, uint256 lastInterestUpdate)
+    {
         UserPosition memory position = positions[user];
-        return (
-            position.borrowed,
-            position.collateralAmount,
-            position.creditScoreTokenId,
-            position.lastInterestUpdate
-        );
+        return (position.borrowed, position.collateralAmount, position.creditScoreTokenId, position.lastInterestUpdate);
     }
 
     function min(uint256 a, uint256 b) internal pure returns (uint256) {
@@ -305,4 +325,4 @@ contract LendingProtocol is ReentrancyGuard, Ownable {
 
     // Required to receive ETH
     receive() external payable {}
-} 
+}
