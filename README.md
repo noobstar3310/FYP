@@ -74,8 +74,8 @@ NFT_CONTRACT=<deployed-nft-address> make verify-nft-contract
 
 ## 🔍 Contract Addresses (Sepolia)
 
-- LendingProtocol: [0xf44daB7702Fde62583A941BCA8e60dC3069f9663](https://sepolia.etherscan.io/address/0xf44dab7702fde62583a941bca8e60dc3069f9663)
-- CreditScoreNFT: [0x95cC2E9A1851b3294Ed7DCA77351f7ED84375e53](https://sepolia.etherscan.io/address/0x95cc2e9a1851b3294ed7dca77351f7ed84375e53)
+- LendingProtocol: [0x56a2969bd99d799e4768841a7af1748b5e5f2f7c](https://sepolia.etherscan.io/address/0x56a2969bd99d799e4768841a7af1748b5e5f2f7c)
+- CreditScoreNFT: [0x30468dcB23E205d64b272AFC887B9F8168062b91](https://sepolia.etherscan.io/address/0x30468dcB23E205d64b272AFC887B9F8168062b91)
 
 ## 💡 Usage
 
