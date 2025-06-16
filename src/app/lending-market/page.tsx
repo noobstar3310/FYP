@@ -6,7 +6,7 @@ import { useAccount, useReadContract, useWriteContract, useBalance, useWatchCont
 import { formatEther, parseEther } from "viem"
 
 // Contract ABIs and addresses
-const LENDING_PROTOCOL_ADDRESS = "0x0772d5ae5354336bd18ff8fd35fA8f0e55b51EBB"
+const LENDING_PROTOCOL_ADDRESS = "0x56A2969Bd99D799E4768841A7AF1748b5e5F2f7c"
 const LENDING_PROTOCOL_ABI = [
   {
     "inputs": [{"internalType": "address","name": "user","type": "address"}],
@@ -22,7 +22,7 @@ const LENDING_PROTOCOL_ABI = [
   },
   {
     "inputs": [],
-    "name": "collateralize",
+    "name": "depositOrCollateralize",
     "outputs": [],
     "stateMutability": "payable",
     "type": "function"
@@ -36,6 +36,23 @@ const LENDING_PROTOCOL_ABI = [
       {"internalType": "uint256","name": "interestRate","type": "uint256"}
     ],
     "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "getAvailableLiquidity",
+    "outputs": [{"internalType": "uint256","name": "","type": "uint256"}],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {"internalType": "uint256","name": "_weiAmount","type": "uint256"},
+      {"internalType": "uint256","name": "_creditScoreTokenId","type": "uint256"}
+    ],
+    "name": "borrow",
+    "outputs": [],
+    "stateMutability": "payable",
     "type": "function"
   }
 ] as const
@@ -72,8 +89,11 @@ const EthereumLogo = () => (
 export default function LendingMarketPage() {
   const [isVisible, setIsVisible] = useState(false)
   const [isSupplyModalOpen, setIsSupplyModalOpen] = useState(false)
+  const [isBorrowModalOpen, setIsBorrowModalOpen] = useState(false)
   const [supplyAmount, setSupplyAmount] = useState("")
+  const [borrowAmount, setBorrowAmount] = useState("")
   const [isSupplying, setIsSupplying] = useState(false)
+  const [isBorrowing, setIsBorrowing] = useState(false)
   const { address: userAddress, isConnected } = useAccount()
   const { writeContractAsync } = useWriteContract()
 
@@ -89,6 +109,36 @@ export default function LendingMarketPage() {
     functionName: 'getUserPosition',
     args: userAddress ? [userAddress] : undefined,
   })
+
+  // Read available liquidity from the contract
+  const { data: availableLiquidity } = useReadContract({
+    address: LENDING_PROTOCOL_ADDRESS,
+    abi: LENDING_PROTOCOL_ABI,
+    functionName: 'getAvailableLiquidity',
+  })
+
+  // Debug logging
+  useEffect(() => {
+    console.log('Connected wallet address:', userAddress)
+    console.log('User position data:', userPosition)
+    if (userPosition) {
+      console.log('Raw contract response:', {
+        borrowed: userPosition[0].toString(),
+        collateralAmount: userPosition[1].toString(),
+        creditScoreTokenId: userPosition[2].toString(),
+        lastInterestUpdate: userPosition[3].toString()
+      });
+      
+      const bigIntValue = BigInt(userPosition[1]);
+      console.log('Collateral as BigInt:', bigIntValue.toString());
+      
+      const ethValue = formatEther(bigIntValue);
+      console.log('Collateral in ETH:', ethValue);
+      
+      const formattedValue = Number(ethValue).toFixed(2);
+      console.log('Formatted collateral:', formattedValue, 'ETH');
+    }
+  }, [userAddress, userPosition])
 
   // Read pool data to get total deposited amount
   const { data: poolData, refetch: refetchPoolData } = useReadContract({
@@ -116,8 +166,8 @@ export default function LendingMarketPage() {
 
   // Format user's supplied amount (collateralAmount) for display
   const formattedCollateral = userPosition ? 
-    `${Number(formatEther(userPosition[1])).toFixed(2)} ETH` : 
-    "0.00 ETH"
+    `${Number(formatEther(BigInt(userPosition[1]))).toFixed(4)} ETH` : 
+    "0.0000 ETH"
 
   // Format total deposited amount for available to borrow display
   const formattedTotalDeposited = poolData ? 
@@ -128,6 +178,19 @@ export default function LendingMarketPage() {
   const formattedInterestRate = poolData ?
     `${(Number(poolData[2]) / 100).toFixed(2)}%` :
     "0.00%"
+
+  // Format available liquidity for display
+  const formattedAvailableLiquidity = availableLiquidity ? 
+    `${Number(formatEther(BigInt(availableLiquidity))).toFixed(4)} ETH` : 
+    "0.0000 ETH"
+
+  // Debug logging for available liquidity
+  useEffect(() => {
+    if (availableLiquidity) {
+      console.log('Raw available liquidity:', availableLiquidity.toString());
+      console.log('Available liquidity in ETH:', formattedAvailableLiquidity);
+    }
+  }, [availableLiquidity, formattedAvailableLiquidity])
 
   useEffect(() => {
     setIsVisible(true)
@@ -145,7 +208,7 @@ export default function LendingMarketPage() {
       await writeContractAsync({
         address: LENDING_PROTOCOL_ADDRESS,
         abi: LENDING_PROTOCOL_ABI,
-        functionName: 'collateralize',
+        functionName: 'depositOrCollateralize',
         value: supplyAmountWei,
       })
 
@@ -169,6 +232,41 @@ export default function LendingMarketPage() {
     }
   }
 
+  const handleBorrow = async () => {
+    if (!borrowAmount || !userAddress || !userPosition) return
+
+    try {
+      setIsBorrowing(true)
+      
+      // Convert ETH amount to Wei for the contract
+      const borrowAmountWei = parseEther(borrowAmount)
+
+      await writeContractAsync({
+        address: LENDING_PROTOCOL_ADDRESS,
+        abi: LENDING_PROTOCOL_ABI,
+        functionName: 'borrow',
+        args: [borrowAmountWei, userPosition[2]], // borrowAmount and creditScoreTokenId
+      })
+
+      // Refetch user position after successful borrow
+      await refetchUserPosition()
+      
+      setIsBorrowModalOpen(false)
+      setBorrowAmount("")
+    } catch (error) {
+      console.error('Error borrowing ETH:', error)
+    } finally {
+      setIsBorrowing(false)
+    }
+  }
+
+  const handleMaxBorrowClick = () => {
+    if (availableLiquidity) {
+      const maxAmount = Number(formatEther(BigInt(availableLiquidity)))
+      setBorrowAmount(maxAmount.toString())
+    }
+  }
+
   const ethMetrics: AssetMetrics = {
     balance: formattedBalance,
     apy: formattedInterestRate,
@@ -182,9 +280,9 @@ export default function LendingMarketPage() {
   }
 
   const ethToBorrow: AssetToBorrow = {
-    availableToBorrow: formattedTotalDeposited,
+    availableToBorrow: formattedAvailableLiquidity,
     variableApy: formattedInterestRate,
-    totalBorrowed: poolData ? `${Number(formatEther(poolData[1])).toFixed(2)} ETH` : "0.00 ETH"
+    totalBorrowed: poolData ? `${Number(formatEther(poolData[1])).toFixed(4)} ETH` : "0.0000 ETH"
   }
 
   return (
@@ -350,6 +448,89 @@ export default function LendingMarketPage() {
           </div>
         )}
 
+        {/* Borrow Modal */}
+        {isBorrowModalOpen && (
+          <div className="fixed inset-0 bg-black/20 backdrop-blur-sm flex items-center justify-center z-50">
+            <div className="bg-white w-[480px] rounded-xl shadow-xl">
+              {/* Modal Header */}
+              <div className="flex justify-between items-center p-6 border-b border-gray-100">
+                <h3 className="text-xl font-medium text-black">Borrow ETH</h3>
+                <button 
+                  onClick={() => {
+                    setIsBorrowModalOpen(false)
+                    setBorrowAmount("")
+                  }}
+                  className="text-black hover:text-gray-600 transition-colors"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                  </svg>
+                </button>
+              </div>
+
+              {/* Modal Content */}
+              <div className="p-6">
+                <div className="mb-6">
+                  <div className="flex justify-between items-center mb-2">
+                    <label className="text-sm text-black font-medium">Amount</label>
+                    <div className="text-sm text-black">
+                      Available: {formattedAvailableLiquidity}
+                    </div>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type="number"
+                      step="0.0001"
+                      value={borrowAmount}
+                      onChange={(e) => setBorrowAmount(e.target.value)}
+                      className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:border-black bg-gray-50 text-black placeholder-gray-500"
+                      placeholder="0.0000"
+                    />
+                    <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center space-x-2">
+                      <button 
+                        onClick={handleMaxBorrowClick}
+                        className="text-sm font-medium text-black hover:opacity-70 transition-opacity"
+                      >
+                        MAX
+                      </button>
+                      <span className="text-black">|</span>
+                      <span className="font-medium text-black">ETH</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Transaction Overview */}
+                <div className="bg-gray-50 rounded-lg p-4 mb-6">
+                  <h4 className="text-sm text-black font-medium mb-3">Transaction overview</h4>
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-black">Variable APY</span>
+                      <span className="font-medium text-black">{formattedInterestRate}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-black">Credit Score Token ID</span>
+                      <span className="font-medium text-black">
+                        {userPosition ? Number(userPosition[2]).toString() : 'None'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Action Button */}
+                <button
+                  onClick={handleBorrow}
+                  disabled={!borrowAmount || isBorrowing || !isConnected || !userPosition?.[2]}
+                  className="w-full py-4 bg-gray-600 text-white font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-700 transition-colors rounded-lg"
+                >
+                  {!userPosition?.[2] ? 'Credit Score NFT Required' : 
+                   isBorrowing ? 'Borrowing...' : 'Borrow ETH'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Positions Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-16">
           {/* Borrow Position */}
@@ -406,7 +587,7 @@ export default function LendingMarketPage() {
 
                 <div className="text-right">
                   <div className="text-sm text-gray-600 uppercase tracking-wide mb-1">Available</div>
-                  <div className="text-lg font-light text-black font-mono">{formattedTotalDeposited}</div>
+                  <div className="text-lg font-light text-black font-mono">{formattedAvailableLiquidity}</div>
                 </div>
 
                 <div className="text-right">
@@ -415,7 +596,10 @@ export default function LendingMarketPage() {
                 </div>
 
                 <div className="text-right">
-                  <button className="px-6 py-2 border border-black text-black font-medium uppercase tracking-wide text-sm hover:bg-black hover:text-white transition-colors">
+                  <button 
+                    onClick={() => setIsBorrowModalOpen(true)}
+                    className="px-6 py-2 border border-black text-black font-medium uppercase tracking-wide text-sm hover:bg-black hover:text-white transition-colors"
+                  >
                     Borrow
                   </button>
                 </div>
