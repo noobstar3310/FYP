@@ -86,4 +86,8 @@ contract CreditScoreNFT is ERC721 {
     function owner() public view returns (address) {
         return msg.sender;
     }
+
+    function getTokenId() public view returns (uint256) {
+        return _nextTokenId;
+    }
 }

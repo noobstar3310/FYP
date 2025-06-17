@@ -48,11 +48,8 @@ contract LendingProtocol is ReentrancyGuard, Ownable {
 
     // Constants
     uint256 private constant BASE_COLLATERAL_RATIO = 15000; // 150% in basis points
-    uint256 private constant MIN_COLLATERAL_RATIO = 11000; // 110% in basis points
+    uint256 private constant MIN_COLLATERAL_RATIO = 8000; // 80% in basis points - EXTREMELY RISKY!
     uint256 private constant BASIS_POINTS = 10000;
-
-    // Array of credit thresholds (ordered from highest to lowest score)
-    CreditThreshold[] public creditThresholds;
 
     // Events
     event Deposited(address indexed user, uint256 amount);
@@ -67,7 +64,8 @@ contract LendingProtocol is ReentrancyGuard, Ownable {
     modifier checkAmountMoreThanZeroAndLessThanAvailableLiquidity(uint256 _weiAmount) {
         if (_weiAmount <= 0) {
             revert LendingProtocol__AmountMustBeGreaterThanOrEqualToZero();
-        } if (_weiAmount > getAvailableLiquidity()) {
+        }
+        if (_weiAmount > getAvailableLiquidity()) {
             revert LendingProtocol__InsufficientLiquidity();
         }
         _;
@@ -79,29 +77,23 @@ contract LendingProtocol is ReentrancyGuard, Ownable {
 
         // Initialize pool with 5% interest rate
         pool.interestRate = 500;
-
-        // Initialize credit score thresholds and their discounts
-        creditThresholds.push(CreditThreshold({score: 90, discount: 3000})); // 90+ score = 30% discount
-        creditThresholds.push(CreditThreshold({score: 80, discount: 2500})); // 80-89 score = 25% discount
-        creditThresholds.push(CreditThreshold({score: 70, discount: 2000})); // 70-79 score = 20% discount
-        creditThresholds.push(CreditThreshold({score: 60, discount: 1500})); // 60-69 score = 15% discount
-        creditThresholds.push(CreditThreshold({score: 50, discount: 1000})); // 50-59 score = 10% discount
-        creditThresholds.push(CreditThreshold({score: 40, discount: 500})); // 40-49 score = 5% discount
-            // Below 40 = no discount
     }
 
     function mintCreditScore(uint256 _initialCreditScore) external returns (uint256) {
         // Validate initial score
         if (_initialCreditScore >= 100 || _initialCreditScore < 0) {
             revert LendingProtocol__InvalidCreditScore();
-        } if (positions[msg.sender].borrowed != 0) {
+        }
+        if (positions[msg.sender].borrowed != 0) {
             revert LendingProtocol__CannotMintWhileHavingActiveLoan();
-        } if (creditScoreNFT.balanceOf(msg.sender) != 0) {
+        }
+        if (creditScoreNFT.balanceOf(msg.sender) != 0) {
             revert LendingProtocol__UserAlreadyHasCreditScoreNFT();
         }
 
         // Mint new credit score NFT with initial score
         uint256 tokenId = creditScoreNFT.mint(msg.sender, _initialCreditScore);
+        positions[msg.sender].creditScoreTokenId = tokenId;
         emit CreditScoreMinted(msg.sender, tokenId);
         return tokenId;
     }
@@ -115,8 +107,11 @@ contract LendingProtocol is ReentrancyGuard, Ownable {
         emit Deposited(msg.sender, msg.value);
     }
 
-    function withdraw(uint256 _weiAmount) external nonReentrant checkAmountMoreThanZeroAndLessThanAvailableLiquidity(_weiAmount) {
-
+    function withdraw(uint256 _weiAmount)
+        external
+        nonReentrant
+        checkAmountMoreThanZeroAndLessThanAvailableLiquidity(_weiAmount)
+    {
         pool.totalDeposited -= _weiAmount;
         (bool success,) = payable(msg.sender).call{value: _weiAmount}("");
         require(success, "ETH transfer failed");
@@ -124,7 +119,12 @@ contract LendingProtocol is ReentrancyGuard, Ownable {
         emit Withdrawn(msg.sender, _weiAmount);
     }
 
-    function borrow(uint256 _weiAmount, uint256 _creditScoreTokenId) external payable nonReentrant checkAmountMoreThanZeroAndLessThanAvailableLiquidity (_weiAmount) {
+    function borrow(uint256 _weiAmount, uint256 _creditScoreTokenId)
+        external
+        payable
+        nonReentrant
+        checkAmountMoreThanZeroAndLessThanAvailableLiquidity(_weiAmount)
+    {
         uint256 requiredCollateral;
         bool hasNFT;
         if (_creditScoreTokenId != 0) {
@@ -273,23 +273,35 @@ contract LendingProtocol is ReentrancyGuard, Ownable {
     }
 
     function calculateRequiredCollateral(uint256 amount, uint256 creditScore) public view returns (uint256) {
-        uint256 baseCollateral = (amount * BASE_COLLATERAL_RATIO) / BASIS_POINTS;
-
-        // Find the applicable discount based on credit score
-        uint256 discount = 0;
-        for (uint256 i = 0; i < creditThresholds.length; i++) {
-            if (creditScore >= creditThresholds[i].score) {
-                discount = creditThresholds[i].discount;
-                break;
-            }
+        // Check if the amount exceeds available liquidity
+        if (amount > getAvailableLiquidity()) {
+            revert LendingProtocol__InsufficientLiquidity();
         }
 
-        // Apply the discount
-        uint256 discountedCollateral = baseCollateral - ((baseCollateral * discount) / BASIS_POINTS);
+        // Calculate required collateral based on credit score
+        uint256 requiredCollateral;
 
-        // Ensure minimum collateral ratio is maintained
-        uint256 minCollateral = (amount * MIN_COLLATERAL_RATIO) / BASIS_POINTS;
-        return max(discountedCollateral, minCollateral);
+        if (creditScore >= 95) {
+            requiredCollateral = (amount * 100) / 150; // Need 66.67% collateral for borrowing
+        } else if (creditScore >= 90) {
+            requiredCollateral = (amount * 100) / 140; // Need 71.43% collateral for borrowing
+        } else if (creditScore >= 85) {
+            requiredCollateral = (amount * 100) / 130; // Need 76.92% collateral for borrowing
+        } else if (creditScore >= 80) {
+            requiredCollateral = (amount * 100) / 120; // Need 83.33% collateral for borrowing
+        } else if (creditScore >= 70) {
+            requiredCollateral = (amount * 100) / 110; // Need 90.91% collateral for borrowing
+        } else if (creditScore >= 60) {
+            requiredCollateral = amount; // Need 100% collateral for borrowing
+        } else if (creditScore >= 50) {
+            requiredCollateral = (amount * 100) / 90; // Need 111.11% collateral for borrowing
+        } else if (creditScore >= 40) {
+            requiredCollateral = (amount * 100) / 80; // Need 125% collateral for borrowing
+        } else {
+            requiredCollateral = (amount * 100) / 70; // Need 142.86% collateral for borrowing
+        }
+
+        return requiredCollateral;
     }
 
     function calculateInterest(uint256 borrowed, uint256 lastUpdate) public view returns (uint256) {
@@ -321,6 +333,50 @@ contract LendingProtocol is ReentrancyGuard, Ownable {
 
     function max(uint256 a, uint256 b) internal pure returns (uint256) {
         return a > b ? a : b;
+    }
+
+    function getMaxBorrowableAmount(address user) external view returns (uint256) {
+        UserPosition memory position = positions[user];
+        uint256 collateral = position.collateralAmount;
+        uint256 maxAmount;
+        uint256 availableLiquidity = getAvailableLiquidity();
+
+        // If user has no collateral or protocol has no liquidity, they can't borrow
+        if (collateral == 0 || availableLiquidity == 0) {
+            return 0;
+        } else {
+            // Calculate max borrowable amount based on collateral and credit score
+            if (position.creditScoreTokenId >= 0) {
+                CreditScoreNFT.CreditData memory creditData = creditScoreNFT.getCreditData(position.creditScoreTokenId);
+                uint256 creditScore = creditData.creditScore;
+
+                // Higher credit score = lower collateral requirement = higher borrowing power
+                if (creditScore >= 95) {
+                    maxAmount = (collateral * 150) / 100; // Can borrow 150% of collateral
+                } else if (creditScore >= 90) {
+                    maxAmount = (collateral * 140) / 100; // Can borrow 140% of collateral
+                } else if (creditScore >= 85) {
+                    maxAmount = (collateral * 130) / 100; // Can borrow 130% of collateral
+                } else if (creditScore >= 80) {
+                    maxAmount = (collateral * 120) / 100; // Can borrow 120% of collateral
+                } else if (creditScore >= 70) {
+                    maxAmount = (collateral * 110) / 100; // Can borrow 110% of collateral
+                } else if (creditScore >= 60) {
+                    maxAmount = collateral; // Can borrow 100% of collateral
+                } else if (creditScore >= 50) {
+                    maxAmount = (collateral * 90) / 100; // Can borrow 90% of collateral
+                } else if (creditScore >= 40) {
+                    maxAmount = (collateral * 80) / 100; // Can borrow 80% of collateral
+                } else {
+                    maxAmount = (collateral * 70) / 100; // Can borrow 70% of collateral
+                }
+            } else {
+                maxAmount = (collateral * 50) / 100; // No NFT: Can borrow 50% of collateral
+            }
+
+            // Return the minimum between calculated maxAmount and available liquidity
+            return maxAmount > availableLiquidity ? availableLiquidity : maxAmount;
+        }
     }
 
     // Required to receive ETH
