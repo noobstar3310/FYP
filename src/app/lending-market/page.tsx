@@ -6,7 +6,7 @@ import { useAccount, useReadContract, useWriteContract, useBalance, useWatchCont
 import { formatEther, parseEther } from "viem"
 
 // Contract ABIs and addresses
-const LENDING_PROTOCOL_ADDRESS = "0x56A2969Bd99D799E4768841A7AF1748b5e5F2f7c"
+const LENDING_PROTOCOL_ADDRESS = "0x8F053915Ed01951f2Cf1DE4a538c42CAC80f4502"
 const LENDING_PROTOCOL_ABI = [
   {
     "inputs": [{"internalType": "address","name": "user","type": "address"}],
@@ -41,6 +41,13 @@ const LENDING_PROTOCOL_ABI = [
   {
     "inputs": [],
     "name": "getAvailableLiquidity",
+    "outputs": [{"internalType": "uint256","name": "","type": "uint256"}],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [{"internalType": "address","name": "user","type": "address"}],
+    "name": "getMaxBorrowableAmount",
     "outputs": [{"internalType": "uint256","name": "","type": "uint256"}],
     "stateMutability": "view",
     "type": "function"
@@ -117,6 +124,14 @@ export default function LendingMarketPage() {
     functionName: 'getAvailableLiquidity',
   })
 
+  // Read max borrowable amount
+  const { data: maxBorrowableAmount } = useReadContract({
+    address: LENDING_PROTOCOL_ADDRESS,
+    abi: LENDING_PROTOCOL_ABI,
+    functionName: 'getMaxBorrowableAmount',
+    args: userAddress ? [userAddress] : undefined,
+  })
+
   // Debug logging
   useEffect(() => {
     console.log('Connected wallet address:', userAddress)
@@ -184,6 +199,11 @@ export default function LendingMarketPage() {
     `${Number(formatEther(BigInt(availableLiquidity))).toFixed(4)} ETH` : 
     "0.0000 ETH"
 
+  // Format max borrowable amount for display
+  const formattedMaxBorrowable = maxBorrowableAmount ? 
+    `${Number(formatEther(BigInt(maxBorrowableAmount))).toFixed(4)} ETH` : 
+    "0.0000 ETH"
+
   // Debug logging for available liquidity
   useEffect(() => {
     if (availableLiquidity) {
@@ -191,6 +211,14 @@ export default function LendingMarketPage() {
       console.log('Available liquidity in ETH:', formattedAvailableLiquidity);
     }
   }, [availableLiquidity, formattedAvailableLiquidity])
+
+  // Debug logging for max borrowable amount
+  useEffect(() => {
+    if (maxBorrowableAmount) {
+      console.log('Raw max borrowable amount:', maxBorrowableAmount.toString());
+      console.log('Max borrowable in ETH:', formattedMaxBorrowable);
+    }
+  }, [maxBorrowableAmount, formattedMaxBorrowable])
 
   useEffect(() => {
     setIsVisible(true)
@@ -261,8 +289,8 @@ export default function LendingMarketPage() {
   }
 
   const handleMaxBorrowClick = () => {
-    if (availableLiquidity) {
-      const maxAmount = Number(formatEther(BigInt(availableLiquidity)))
+    if (maxBorrowableAmount) {
+      const maxAmount = Number(formatEther(BigInt(maxBorrowableAmount)))
       setBorrowAmount(maxAmount.toString())
     }
   }
@@ -280,7 +308,7 @@ export default function LendingMarketPage() {
   }
 
   const ethToBorrow: AssetToBorrow = {
-    availableToBorrow: formattedAvailableLiquidity,
+    availableToBorrow: formattedMaxBorrowable,
     variableApy: formattedInterestRate,
     totalBorrowed: poolData ? `${Number(formatEther(poolData[1])).toFixed(4)} ETH` : "0.0000 ETH"
   }
@@ -475,7 +503,7 @@ export default function LendingMarketPage() {
                   <div className="flex justify-between items-center mb-2">
                     <label className="text-sm text-black font-medium">Amount</label>
                     <div className="text-sm text-black">
-                      Available: {formattedAvailableLiquidity}
+                      Available: {formattedMaxBorrowable}
                     </div>
                   </div>
                   <div className="relative">
@@ -587,7 +615,7 @@ export default function LendingMarketPage() {
 
                 <div className="text-right">
                   <div className="text-sm text-gray-600 uppercase tracking-wide mb-1">Available</div>
-                  <div className="text-lg font-light text-black font-mono">{formattedAvailableLiquidity}</div>
+                  <div className="text-lg font-light text-black font-mono">{formattedMaxBorrowable}</div>
                 </div>
 
                 <div className="text-right">
