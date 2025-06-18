@@ -14,7 +14,7 @@ contract CreditScoreNFT is ERC721 {
     mapping(uint256 => CreditData) public creditScores;
 
     // Counter for token IDs
-    uint256 private _nextTokenId;
+    uint256 private _nextTokenId = 1;
 
     // Events
     event CreditScoreUpdated(uint256 indexed tokenId, uint256 newScore);
@@ -89,5 +89,19 @@ contract CreditScoreNFT is ERC721 {
 
     function getTokenId() public view returns (uint256) {
         return _nextTokenId;
+    }
+
+    function getHolderTokenId(address holder) public view returns (uint256) {
+        if (balanceOf(holder) == 0){
+            return 0;
+        } else {
+            for (uint256 i = 0; i < _nextTokenId; i++) {
+                // address owner = _ownerOf(i);
+                if (_ownerOf(i) == holder) {
+                    return i;
+                }
+            }
+            return 0; // Return 0 if no token is found
+        }        
     }
 }

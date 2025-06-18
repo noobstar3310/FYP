@@ -345,9 +345,11 @@ contract LendingProtocol is ReentrancyGuard, Ownable {
         if (collateral == 0 || availableLiquidity == 0) {
             return 0;
         } else {
-            // Calculate max borrowable amount based on collateral and credit score
-            if (position.creditScoreTokenId >= 0) {
-                CreditScoreNFT.CreditData memory creditData = creditScoreNFT.getCreditData(position.creditScoreTokenId);
+            uint256 tokenId = creditScoreNFT.getHolderTokenId(user);
+            
+            if (tokenId > 0) {
+                // User has an NFT, calculate based on credit score
+                CreditScoreNFT.CreditData memory creditData = creditScoreNFT.getCreditData(tokenId);
                 uint256 creditScore = creditData.creditScore;
 
                 // Higher credit score = lower collateral requirement = higher borrowing power
