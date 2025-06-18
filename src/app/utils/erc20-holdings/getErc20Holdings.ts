@@ -1,6 +1,4 @@
-import Moralis from 'moralis';
-
-const MORALIS_API_KEY = process.env.NEXT_PUBLIC_MORALIS_API_KEY;
+import { ethers } from 'ethers';
 
 // Token contract addresses
 export const STABLECOIN_ADDRESSES = {
@@ -9,19 +7,18 @@ export const STABLECOIN_ADDRESSES = {
   USDT: '0xdAC17F958D2ee523a2206206994597C13D831ec7'
 } as const;
 
+// Minimal ERC20 ABI for balanceOf
+const ERC20_ABI = [
+  "function balanceOf(address owner) view returns (uint256)",
+  "function decimals() view returns (uint8)",
+  "function symbol() view returns (string)"
+];
+
 export type TokenHolding = {
   token_address: string;
-  name: string;
   symbol: string;
-  logo?: string;
-  thumbnail?: string;
   decimals: number;
   balance: string;
-  possible_spam?: boolean;
-  verified_collection?: boolean;
-  total_supply?: string;
-  total_supply_formatted?: string;
-  percentage_relative_to_total_supply?: number;
 };
 
 export type TokenHoldingsResponse = {
@@ -29,39 +26,36 @@ export type TokenHoldingsResponse = {
   holdings: TokenHolding[];
 };
 
-// Initialize Moralis once
-if (MORALIS_API_KEY) {
-  try {
-    Moralis.start({
-      apiKey: MORALIS_API_KEY
-    });
-  } catch (error) {
-    console.error("Error initializing Moralis:", error);
-  }
-}
-
 export async function getErc20Holdings(address: string): Promise<TokenHoldingsResponse | null> {
-  if (!MORALIS_API_KEY) {
-    console.error("Moralis API key is missing");
-    throw new Error("Moralis API key not found");
-  }
-
   try {
-    console.log("Fetching ERC20 holdings for address:", address);
-    const response = await Moralis.EvmApi.token.getWalletTokenBalances({
-      chain: "0x1", // Ethereum mainnet
-      address: address,
-      tokenAddresses: Object.values(STABLECOIN_ADDRESSES)
-    });
-
-    console.log("Raw response:", response.raw);
+    // Connect to Ethereum mainnet
+    const provider = new ethers.JsonRpcProvider('https://eth.llamarpc.com');
     
-    // The response.raw is an array of token holdings
-    const holdings = response.raw as TokenHolding[];
+    const holdings: TokenHolding[] = [];
+
+    // Fetch balances for each stablecoin
+    for (const [symbol, tokenAddress] of Object.entries(STABLECOIN_ADDRESSES)) {
+      const contract = new ethers.Contract(tokenAddress, ERC20_ABI, provider);
+      
+      // Get token details and balance
+      const [balance, decimals] = await Promise.all([
+        contract.balanceOf(address),
+        contract.decimals()
+      ]);
+
+      holdings.push({
+        token_address: tokenAddress,
+        symbol: symbol,
+        decimals: decimals,
+        balance: balance.toString()
+      });
+    }
+
+    console.log("Fetched holdings:", holdings);
     
     return {
       address,
-      holdings: holdings || []
+      holdings
     };
   } catch (error) {
     console.error("Error fetching token holdings:", error);

@@ -6,7 +6,7 @@ import { useAccount, useReadContract, useWriteContract, useBalance, useWatchCont
 import { formatEther, parseEther } from "viem"
 
 // Contract ABIs and addresses
-const LENDING_PROTOCOL_ADDRESS = "0x8F053915Ed01951f2Cf1DE4a538c42CAC80f4502"
+const LENDING_PROTOCOL_ADDRESS = "0xbEE1Bdd1B2EaFB02952098b571555d6F4e59deD5"
 const LENDING_PROTOCOL_ABI = [
   {
     "inputs": [{"internalType": "address","name": "user","type": "address"}],
@@ -60,6 +60,34 @@ const LENDING_PROTOCOL_ABI = [
     "name": "borrow",
     "outputs": [],
     "stateMutability": "payable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "repay",
+    "outputs": [],
+    "stateMutability": "payable",
+    "type": "function"
+  },
+  {
+    "inputs": [{"internalType": "uint256","name": "_initialCreditScore","type": "uint256"}],
+    "name": "mintCreditScore",
+    "outputs": [{"internalType": "uint256","name": "","type": "uint256"}],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [{"internalType": "uint256","name": "borrowed","type": "uint256"},{"internalType": "uint256","name": "lastUpdate","type": "uint256"}],
+    "name": "calculateInterest",
+    "outputs": [{"internalType": "uint256","name": "","type": "uint256"}],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [{"internalType": "uint256","name": "amount","type": "uint256"},{"internalType": "uint256","name": "creditScore","type": "uint256"}],
+    "name": "calculateRequiredCollateral",
+    "outputs": [{"internalType": "uint256","name": "","type": "uint256"}],
+    "stateMutability": "view",
     "type": "function"
   }
 ] as const
@@ -615,12 +643,13 @@ export default function LendingMarketPage() {
 
                 <div className="text-right">
                   <div className="text-sm text-gray-600 uppercase tracking-wide mb-1">Available</div>
-                  <div className="text-lg font-light text-black font-mono">{formattedMaxBorrowable}</div>
+                  <div className="text-lg font-light text-black font-mono">{formattedAvailableLiquidity}</div>
                 </div>
 
                 <div className="text-right">
                   <div className="text-sm text-gray-600 uppercase tracking-wide mb-1">Variable APY</div>
                   <div className="text-lg font-light text-black">{ethToBorrow.variableApy}</div>
+                  <div className="text-xs text-gray-500 mt-1">Max Borrowable: {formattedMaxBorrowable}</div>
                 </div>
 
                 <div className="text-right">
