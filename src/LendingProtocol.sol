@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
@@ -98,13 +98,35 @@ contract LendingProtocol is ReentrancyGuard, Ownable {
         return tokenId;
     }
 
-    function depositOrCollateralize() external payable nonReentrant {
+    function deposit() external payable nonReentrant {
         if (msg.value <= 0) {
             revert LendingProtocol__AmountMustBeGreaterThanOrEqualToZero();
         }
         pool.totalDeposited += msg.value;
         positions[msg.sender].collateralAmount += msg.value;
         emit Deposited(msg.sender, msg.value);
+    }
+
+    function collateralizeNFT(uint256 _tokenId) external nonReentrant {
+        // Verify credit score NFT ownership
+        if (creditScoreNFT.ownerOf(_tokenId) != msg.sender) {
+            revert LendingProtocol__NotOwnerOfCreditScoreNFT();
+        }
+
+        // Get credit score data
+        CreditScoreNFT.CreditData memory creditData = creditScoreNFT.getCreditData(_tokenId);
+        if (creditData.isCollateralized) {
+            revert LendingProtocol__AlreadyCollateralized();
+        }
+
+        // Transfer NFT to protocol
+        creditScoreNFT.transferFrom(msg.sender, address(this), _tokenId);
+
+        // Mark credit score as collateralized
+        creditScoreNFT.setCollateralStatus(_tokenId, true);
+
+        // Update user position
+        positions[msg.sender].creditScoreTokenId = _tokenId;
     }
 
     function withdraw(uint256 _weiAmount)
@@ -119,56 +141,53 @@ contract LendingProtocol is ReentrancyGuard, Ownable {
         emit Withdrawn(msg.sender, _weiAmount);
     }
 
-    function borrow(uint256 _weiAmount, uint256 _creditScoreTokenId)
+    function borrow(uint256 _weiAmount)
         external
         payable
         nonReentrant
         checkAmountMoreThanZeroAndLessThanAvailableLiquidity(_weiAmount)
     {
         uint256 requiredCollateral;
-        bool hasNFT;
-        if (_creditScoreTokenId != 0) {
-            hasNFT = true;
-        } else {
-            hasNFT = false;
+        UserPosition storage position = positions[msg.sender];
+        bool hasNFT = position.creditScoreTokenId != 0;
+
+        // If user already has a loan, calculate and add accrued interest first
+        if (position.borrowed > 0) {
+            uint256 interest = calculateInterest(position.borrowed, position.lastInterestUpdate);
+            position.borrowed += interest;
         }
 
         if (hasNFT) {
-            // Verify credit score NFT ownership
-            if (creditScoreNFT.ownerOf(_creditScoreTokenId) != msg.sender) {
+            // Get credit score data and verify NFT is collateralized
+            CreditScoreNFT.CreditData memory creditData = creditScoreNFT.getCreditData(position.creditScoreTokenId);
+            if (!creditData.isCollateralized || creditScoreNFT.ownerOf(position.creditScoreTokenId) != address(this)) {
                 revert LendingProtocol__NotOwnerOfCreditScoreNFT();
-            }
-
-            // Get credit score data
-            CreditScoreNFT.CreditData memory creditData = creditScoreNFT.getCreditData(_creditScoreTokenId);
-            if (creditData.isCollateralized) {
-                revert LendingProtocol__AlreadyCollateralized();
             }
 
             // Calculate required collateral based on credit score
             requiredCollateral = calculateRequiredCollateral(_weiAmount, creditData.creditScore);
 
-            // Transfer NFT to protocol
-            creditScoreNFT.transferFrom(msg.sender, address(this), _creditScoreTokenId);
-
-            // Mark credit score as collateralized
-            creditScoreNFT.setCollateralStatus(_creditScoreTokenId, true);
+            // Unset collateral status before burning
+            creditScoreNFT.setCollateralStatus(position.creditScoreTokenId, false);
+            
+            // Burn the NFT since it's being used for borrowing
+            creditScoreNFT.burn(position.creditScoreTokenId);
         } else {
             // For users without NFT, require full collateralization (200%)
             requiredCollateral = (_weiAmount * 20000) / BASIS_POINTS; // 200% collateral ratio
         }
 
-        if (positions[msg.sender].collateralAmount < requiredCollateral) {
+        if (position.collateralAmount < requiredCollateral) {
             revert LendingProtocol__InsufficientCollateral();
         }
 
         // Update user position
-        positions[msg.sender].borrowed += _weiAmount;
-        positions[msg.sender].collateralAmount += msg.value;
+        position.borrowed += _weiAmount;
+        position.collateralAmount += msg.value;
         if (hasNFT) {
-            positions[msg.sender].creditScoreTokenId = _creditScoreTokenId;
+            position.creditScoreTokenId = 0; // Set to 0 since NFT is burned
         }
-        positions[msg.sender].lastInterestUpdate = block.timestamp;
+        position.lastInterestUpdate = block.timestamp;
 
         pool.totalBorrowed += _weiAmount;
 
@@ -185,39 +204,35 @@ contract LendingProtocol is ReentrancyGuard, Ownable {
             revert LendingProtocol__NoActiveLoan();
         }
 
+        // Calculate accrued interest
         uint256 interest = calculateInterest(position.borrowed, position.lastInterestUpdate);
         uint256 totalOwed = position.borrowed + interest;
 
         uint256 repayAmount = msg.value > totalOwed ? totalOwed : msg.value;
         uint256 refund = msg.value - repayAmount;
 
-        position.borrowed = totalOwed - repayAmount;
-        position.lastInterestUpdate = block.timestamp;
-        pool.totalBorrowed -= repayAmount;
-
         // If loan is fully repaid
-        if (position.borrowed == 0) {
+        if (repayAmount >= totalOwed) {
+            position.borrowed = 0; // Set borrowed amount to 0
             uint256 collateralToReturn = position.collateralAmount;
             position.collateralAmount = 0;
-
-            // If user had a credit score NFT, update and burn it
-            if (position.creditScoreTokenId != 0) {
-                uint256 tokenId = position.creditScoreTokenId;
-                position.creditScoreTokenId = 0;
-
-                // Update credit score before burning
-                uint256 newScore = calculateNewCreditScore(tokenId, totalOwed, position.lastInterestUpdate);
-                creditScoreNFT.updateCreditScore(tokenId, newScore);
-
-                // Unset collateral status and burn NFT
-                creditScoreNFT.setCollateralStatus(tokenId, false);
-                creditScoreNFT.burn(tokenId);
-            }
 
             // Return collateral
             (bool successCollateral,) = payable(msg.sender).call{value: collateralToReturn}("");
             require(successCollateral, "Collateral return failed");
+        } else {
+            // For partial repayment, first pay off accrued interest, then principal
+            if (repayAmount <= interest) {
+                // If repayment amount is less than or equal to interest
+                position.borrowed = totalOwed - repayAmount;
+            } else {
+                // If repayment amount is more than interest
+                position.borrowed = position.borrowed - (repayAmount - interest);
+            }
         }
+
+        position.lastInterestUpdate = block.timestamp;
+        pool.totalBorrowed = (pool.totalBorrowed + interest) - repayAmount;
 
         // Return excess payment if any
         if (refund > 0) {
@@ -319,7 +334,7 @@ contract LendingProtocol is ReentrancyGuard, Ownable {
     }
 
     function getUserPosition(address user)
-        external
+        public
         view
         returns (uint256 borrowed, uint256 collateralAmount, uint256 creditScoreTokenId, uint256 lastInterestUpdate)
     {
@@ -339,18 +354,20 @@ contract LendingProtocol is ReentrancyGuard, Ownable {
         UserPosition memory position = positions[user];
         uint256 collateral = position.collateralAmount;
         uint256 maxAmount;
+        
         uint256 availableLiquidity = getAvailableLiquidity();
 
         // If user has no collateral or protocol has no liquidity, they can't borrow
         if (collateral == 0 || availableLiquidity == 0) {
             return 0;
         } else {
-            uint256 tokenId = creditScoreNFT.getHolderTokenId(user);
+            (,,uint256 tokenId,)= getUserPosition(user);
             
             if (tokenId > 0) {
                 // User has an NFT, calculate based on credit score
                 CreditScoreNFT.CreditData memory creditData = creditScoreNFT.getCreditData(tokenId);
                 uint256 creditScore = creditData.creditScore;
+                
 
                 // Higher credit score = lower collateral requirement = higher borrowing power
                 if (creditScore >= 95) {
