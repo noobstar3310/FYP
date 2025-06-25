@@ -10,6 +10,8 @@ import { calculateErc20Score } from "../utils/erc20-holdings/calculateErc20Score
 import { getWalletAge } from "../utils/wallet-age-and-activity/getWalletAge"
 import { calculateWalletAgeScore } from "../utils/wallet-age-and-activity/calculateWalletAgeScore"
 import { getParticipationScore } from "../utils/participation/getParticipationScore"
+import { useAccount } from "wagmi"
+import { ConnectButton } from "@rainbow-me/rainbowkit"
 
 type FinalScore = {
   score: number
@@ -67,11 +69,11 @@ function calculateFinalScore(
 }
 
 export default function CreditScore() {
-  const [address, setAddress] = useState("")
+  const { address, isConnected } = useAccount()
   const [isLoading, setIsLoading] = useState(false)
   const [scoreData, setScoreData] = useState<FinalScore | null>(null)
   const [isVisible, setIsVisible] = useState(false)
-  const { data: aaveData } = useAaveUserData(isAddress(address) ? (address as `0x${string}`) : undefined)
+  const { data: aaveData } = useAaveUserData(isConnected ? (address as `0x${string}`) : undefined)
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -80,8 +82,15 @@ export default function CreditScore() {
     return () => clearTimeout(timer)
   }, [])
 
+  // Auto-fetch score when wallet is connected
+  useEffect(() => {
+    if (isConnected && address) {
+      handleCheck()
+    }
+  }, [isConnected, address])
+
   const handleCheck = async () => {
-    if (!isAddress(address)) return
+    if (!isConnected || !address) return
 
     setIsLoading(true)
     try {
@@ -250,33 +259,27 @@ export default function CreditScore() {
           </p>
         </div>
 
-        {/* Input Section */}
+        {/* Connection Status */}
         <div className={`mb-24 fade-in ${isVisible ? "visible" : ""} stagger-1`}>
-          <div className="max-w-4xl">
-            <label className="block text-sm font-medium text-ensure-black mb-6 uppercase tracking-widest">
-              Wallet Address
-            </label>
-            <div className="flex items-end space-x-8">
-              <input
-                type="text"
-                value={address}
-                onChange={(e) => setAddress(e.target.value)}
-                placeholder="0x..."
-                className="flex-1 px-0 py-6 text-xl text-ensure-black border-0 border-b-2 border-gray-200 focus:border-black focus:outline-none bg-transparent font-mono tracking-wide transition-colors placeholder-gray-400"
-              />
+          {!isConnected ? (
+            <div className="text-center py-12 border border-gray-200 bg-gray-50">
+              <p className="text-lg text-ensure-gray mb-6">Please connect your wallet to view your credit score</p>
+              <ConnectButton />
+            </div>
+          ) : isLoading ? (
+            <div className="text-center py-12">
+              <p className="text-lg text-ensure-gray">Analyzing your wallet...</p>
+            </div>
+          ) : !scoreData ? (
+            <div className="text-center py-12">
               <button
                 onClick={handleCheck}
-                disabled={!isAddress(address) || isLoading}
-                className={`px-12 py-6 font-medium uppercase tracking-wide transition-all ${
-                  isLoading || !isAddress(address)
-                    ? "bg-gray-200 text-gray-400 cursor-not-allowed"
-                    : "bg-black text-white hover:bg-gray-800 hover:scale-105"
-                }`}
+                className="px-12 py-4 bg-black text-white font-medium uppercase tracking-wide hover:bg-gray-800 transition-all hover:scale-105"
               >
-                {isLoading ? "Analyzing..." : "Analyze"}
+                Analyze My Wallet
               </button>
             </div>
-          </div>
+          ) : null}
         </div>
 
         {/* Score Display */}

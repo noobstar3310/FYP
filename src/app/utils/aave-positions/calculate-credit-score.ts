@@ -15,24 +15,33 @@ export type CreditScoreBreakdown = {
   };
 };
 
-function scoreHealthFactor(hf: number): number {
-  if (hf >= 2.0) return 40;
-  if (hf >= 1.5) return 35;
-  if (hf >= 1.3) return 30;
-  if (hf >= 1.1) return 20;
-  if (hf >= 1.0) return 10;
-  return 0;
+function getRiskGrade(score: number): string {
+  if (score >= 80) return 'A';
+  if (score >= 65) return 'B';
+  if (score >= 50) return 'C';
+  return 'D';
+}
+
+function scoreHealthFactor(healthFactor: number): number {
+  console.log("Scoring health factor:", healthFactor);
+  if (healthFactor >= 2) return 30;
+  if (healthFactor >= 1.5) return 25;
+  if (healthFactor >= 1.2) return 20;
+  if (healthFactor >= 1.1) return 15;
+  return 10;
 }
 
 function scoreLTVDistance(margin: number): number {
-  if (margin >= 10) return 30;
-  if (margin >= 5) return 25;
-  if (margin >= 3) return 20;
-  if (margin >= 1) return 10;
-  return 0;
+  console.log("Scoring LTV margin:", margin);
+  if (margin >= 0.2) return 30;
+  if (margin >= 0.15) return 25;
+  if (margin >= 0.1) return 20;
+  if (margin >= 0.05) return 15;
+  return 10;
 }
 
 function scoreCollateral(collateralUSD: number): number {
+  console.log("Scoring collateral USD:", collateralUSD);
   if (collateralUSD >= 1_000_000) return 20;
   if (collateralUSD >= 500_000) return 18;
   if (collateralUSD >= 100_000) return 15;
@@ -40,32 +49,43 @@ function scoreCollateral(collateralUSD: number): number {
   return 5;
 }
 
-function scoreBorrowDiscipline(ratio: number): number {
-  if (ratio <= 0.5) return 10;
-  if (ratio <= 0.7) return 8;
-  if (ratio <= 0.85) return 5;
+function scoreBorrowDiscipline(borrowRatio: number): number {
+  console.log("Scoring borrow ratio:", borrowRatio);
+  if (borrowRatio <= 0.3) return 20;
+  if (borrowRatio <= 0.5) return 15;
+  if (borrowRatio <= 0.7) return 10;
+  if (borrowRatio <= 0.8) return 5;
   return 0;
 }
 
-function getRiskGrade(score: number): string {
-  if (score >= 85) return 'Excellent';
-  if (score >= 70) return 'Good';
-  if (score >= 50) return 'Moderate';
-  return 'Risky';
-}
-
 export function calculateCreditScore(accountData: UserAccountData): CreditScoreBreakdown {
+  console.log("Calculating credit score for account data:", accountData);
+  
   // Convert bigint values to numbers and normalize
-  const healthFactor = Number(accountData[5]) / 1e18;
-  const ltv = Number(accountData[4]) / 100;
-  const liquidationThreshold = Number(accountData[3]) / 100;
-  const collateralUSD = Number(accountData[0]) / 1e8;
-  const debtUSD = Number(accountData[1]) / 1e8;
-  const availableBorrowsUSD = Number(accountData[2]) / 1e8;
+  const healthFactor = Number(accountData.healthFactor) / 1e18;
+  const ltv = Number(accountData.ltv) / 100;
+  const liquidationThreshold = Number(accountData.currentLiquidationThreshold) / 100;
+  const collateralUSD = Number(accountData.totalCollateralBase) / 1e8;
+  const debtUSD = Number(accountData.totalDebtBase) / 1e8;
+  const availableBorrowsUSD = Number(accountData.availableBorrowsBase) / 1e8;
+
+  console.log("Normalized values:", {
+    healthFactor,
+    ltv,
+    liquidationThreshold,
+    collateralUSD,
+    debtUSD,
+    availableBorrowsUSD
+  });
 
   // Calculate intermediate values
   const ltvMargin = liquidationThreshold - ltv;
   const borrowRatio = debtUSD / (collateralUSD + availableBorrowsUSD);
+
+  console.log("Calculated intermediate values:", {
+    ltvMargin,
+    borrowRatio
+  });
 
   // Calculate component scores
   const healthFactorScore = scoreHealthFactor(healthFactor);
@@ -73,12 +93,21 @@ export function calculateCreditScore(accountData: UserAccountData): CreditScoreB
   const collateralScore = scoreCollateral(collateralUSD);
   const borrowDisciplineScore = scoreBorrowDiscipline(borrowRatio);
 
+  console.log("Component scores:", {
+    healthFactorScore,
+    ltvMarginScore,
+    collateralScore,
+    borrowDisciplineScore
+  });
+
   // Calculate total score
   const totalScore = 
     healthFactorScore +
     ltvMarginScore +
     collateralScore +
     borrowDisciplineScore;
+
+  console.log("Total score:", totalScore);
 
   return {
     healthFactorScore,

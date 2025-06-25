@@ -4,9 +4,10 @@ import type React from "react"
 import { useState, useEffect } from "react"
 import { useAccount, useReadContract, useWriteContract, useBalance, useWatchContractEvent } from "wagmi"
 import { formatEther, parseEther } from "viem"
+import { ConnectButton } from "@rainbow-me/rainbowkit"
 
 // Contract ABIs and addresses
-const LENDING_PROTOCOL_ADDRESS = "0xbEE1Bdd1B2EaFB02952098b571555d6F4e59deD5"
+const LENDING_PROTOCOL_ADDRESS = "0x47E85b70D0DE7529809Fc32ba069fFa4d09aa245"
 const LENDING_PROTOCOL_ABI = [
   {
     "inputs": [{"internalType": "address","name": "user","type": "address"}],
@@ -22,9 +23,16 @@ const LENDING_PROTOCOL_ABI = [
   },
   {
     "inputs": [],
-    "name": "depositOrCollateralize",
+    "name": "deposit",
     "outputs": [],
     "stateMutability": "payable",
+    "type": "function"
+  },
+  {
+    "inputs": [{"internalType": "uint256","name": "_tokenId","type": "uint256"}],
+    "name": "collateralizeNFT",
+    "outputs": [],
+    "stateMutability": "nonpayable",
     "type": "function"
   },
   {
@@ -53,10 +61,7 @@ const LENDING_PROTOCOL_ABI = [
     "type": "function"
   },
   {
-    "inputs": [
-      {"internalType": "uint256","name": "_weiAmount","type": "uint256"},
-      {"internalType": "uint256","name": "_creditScoreTokenId","type": "uint256"}
-    ],
+    "inputs": [{"internalType": "uint256","name": "_weiAmount","type": "uint256"}],
     "name": "borrow",
     "outputs": [],
     "stateMutability": "payable",
@@ -67,27 +72,6 @@ const LENDING_PROTOCOL_ABI = [
     "name": "repay",
     "outputs": [],
     "stateMutability": "payable",
-    "type": "function"
-  },
-  {
-    "inputs": [{"internalType": "uint256","name": "_initialCreditScore","type": "uint256"}],
-    "name": "mintCreditScore",
-    "outputs": [{"internalType": "uint256","name": "","type": "uint256"}],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [{"internalType": "uint256","name": "borrowed","type": "uint256"},{"internalType": "uint256","name": "lastUpdate","type": "uint256"}],
-    "name": "calculateInterest",
-    "outputs": [{"internalType": "uint256","name": "","type": "uint256"}],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [{"internalType": "uint256","name": "amount","type": "uint256"},{"internalType": "uint256","name": "creditScore","type": "uint256"}],
-    "name": "calculateRequiredCollateral",
-    "outputs": [{"internalType": "uint256","name": "","type": "uint256"}],
-    "stateMutability": "view",
     "type": "function"
   }
 ] as const
@@ -137,13 +121,17 @@ export default function LendingMarketPage() {
     address: userAddress,
   })
 
-  // Read user's position from the lending protocol
+  // Get user's position to check NFT status
   const { data: userPosition, refetch: refetchUserPosition } = useReadContract({
     address: LENDING_PROTOCOL_ADDRESS,
     abi: LENDING_PROTOCOL_ABI,
     functionName: 'getUserPosition',
     args: userAddress ? [userAddress] : undefined,
   })
+
+  const hasNFT = userPosition && Number(userPosition[2]) > 0
+  const nftId = hasNFT ? Number(userPosition[2]).toString() : null
+  const isNFTCollateralized = userPosition && Number(userPosition[1]) > 0
 
   // Read available liquidity from the contract
   const { data: availableLiquidity } = useReadContract({
@@ -264,7 +252,7 @@ export default function LendingMarketPage() {
       await writeContractAsync({
         address: LENDING_PROTOCOL_ADDRESS,
         abi: LENDING_PROTOCOL_ABI,
-        functionName: 'depositOrCollateralize',
+        functionName: 'deposit',
         value: supplyAmountWei,
       })
 
@@ -280,16 +268,26 @@ export default function LendingMarketPage() {
     }
   }
 
-  const handleMaxClick = () => {
-    if (userBalance) {
-      // Leave some ETH for gas fees (0.01 ETH)
-      const maxAmount = Number(formatEther(userBalance.value)) - 0.01
-      setSupplyAmount(maxAmount > 0 ? maxAmount.toString() : "0")
+  const handleCollateralizeNFT = async () => {
+    if (!hasNFT || !nftId) return
+
+    try {
+      await writeContractAsync({
+        address: LENDING_PROTOCOL_ADDRESS,
+        abi: LENDING_PROTOCOL_ABI,
+        functionName: 'collateralizeNFT',
+        args: [BigInt(nftId)],
+      })
+
+      // Refetch user position after successful collateralization
+      await refetchUserPosition()
+    } catch (error) {
+      console.error('Error collateralizing NFT:', error)
     }
   }
 
   const handleBorrow = async () => {
-    if (!borrowAmount || !userAddress || !userPosition) return
+    if (!borrowAmount || !userAddress) return
 
     try {
       setIsBorrowing(true)
@@ -301,7 +299,7 @@ export default function LendingMarketPage() {
         address: LENDING_PROTOCOL_ADDRESS,
         abi: LENDING_PROTOCOL_ABI,
         functionName: 'borrow',
-        args: [borrowAmountWei, userPosition[2]], // borrowAmount and creditScoreTokenId
+        args: [borrowAmountWei],
       })
 
       // Refetch user position after successful borrow
@@ -313,6 +311,14 @@ export default function LendingMarketPage() {
       console.error('Error borrowing ETH:', error)
     } finally {
       setIsBorrowing(false)
+    }
+  }
+
+  const handleMaxClick = () => {
+    if (userBalance) {
+      // Leave some ETH for gas fees (0.01 ETH)
+      const maxAmount = Number(formatEther(userBalance.value)) - 0.01
+      setSupplyAmount(maxAmount > 0 ? maxAmount.toString() : "0")
     }
   }
 
@@ -421,6 +427,69 @@ export default function LendingMarketPage() {
                 Supply ETH
               </button>
             </div>
+          </div>
+        </div>
+
+        {/* Credit Score NFT Status */}
+        <div className={`mb-24 fade-in ${isVisible ? "visible" : ""} stagger-1`}>
+          <div className="mb-8">
+            <h2 className="text-2xl font-light text-black uppercase tracking-wide">Credit Score NFT</h2>
+            <div className="w-24 h-px bg-black mt-4"></div>
+          </div>
+
+          <div className="bg-gray-50 rounded-xl p-8 border border-gray-200">
+            {!isConnected ? (
+              <div className="text-center">
+                <p className="text-gray-600 mb-4">Connect your wallet to view your Credit Score NFT status</p>
+                <ConnectButton />
+              </div>
+            ) : !hasNFT ? (
+              <div className="text-center">
+                <p className="text-gray-600 mb-4">You don't have a Credit Score NFT yet</p>
+                <a 
+                  href="/finalized-score" 
+                  className="inline-block px-6 py-2 bg-black text-white font-medium uppercase tracking-wide hover:bg-gray-800 transition-colors"
+                >
+                  Get Your Credit Score NFT
+                </a>
+              </div>
+            ) : (
+              <div className="space-y-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-xl font-medium text-black mb-2">Credit Score NFT #{nftId}</h3>
+                    <p className="text-gray-600">
+                      Status: {isNFTCollateralized ? (
+                        <span className="text-green-600 font-medium">Active as Collateral</span>
+                      ) : (
+                        <span className="text-yellow-600 font-medium">Not Collateralized</span>
+                      )}
+                    </p>
+                  </div>
+                  {!isNFTCollateralized && (
+                    <button 
+                      onClick={handleCollateralizeNFT}
+                      className="px-6 py-2 bg-black text-white font-medium uppercase tracking-wide hover:bg-gray-800 transition-colors"
+                    >
+                      Use as Collateral
+                    </button>
+                  )}
+                </div>
+                {isNFTCollateralized && (
+                  <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                    <div className="flex items-center gap-2 text-green-800">
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                      </svg>
+                      <span className="font-medium">Your Credit Score NFT is being used as collateral</span>
+                    </div>
+                    <p className="text-green-700 text-sm mt-2">
+                      This allows you to borrow assets based on your credit score
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
