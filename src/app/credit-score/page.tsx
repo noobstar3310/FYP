@@ -10,6 +10,32 @@ import { calculateErc20Score } from "../utils/erc20-holdings/calculateErc20Score
 import { getWalletAge } from "../utils/wallet-age-and-activity/getWalletAge"
 import { calculateWalletAgeScore } from "../utils/wallet-age-and-activity/calculateWalletAgeScore"
 import { getParticipationScore } from "../utils/participation/getParticipationScore"
+import { useAccount, useWriteContract, useReadContract } from "wagmi"
+import { ConnectButton } from "@rainbow-me/rainbowkit"
+
+// Contract configuration
+const LENDING_PROTOCOL_ADDRESS = "0x47E85b70D0DE7529809Fc32ba069fFa4d09aa245" as const
+const LENDING_PROTOCOL_ABI = [
+  {
+    "inputs": [{"internalType": "uint256","name": "_initialCreditScore","type": "uint256"}],
+    "name": "mintCreditScore",
+    "outputs": [{"internalType": "uint256","name": "","type": "uint256"}],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [{"internalType": "address","name": "user","type": "address"}],
+    "name": "getUserPosition",
+    "outputs": [
+      {"internalType": "uint256","name": "borrowed","type": "uint256"},
+      {"internalType": "uint256","name": "collateralAmount","type": "uint256"},
+      {"internalType": "uint256","name": "creditScoreTokenId","type": "uint256"},
+      {"internalType": "uint256","name": "lastInterestUpdate","type": "uint256"}
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  }
+] as const
 
 type FinalScore = {
   score: number
@@ -71,7 +97,22 @@ export default function CreditScore() {
   const [isLoading, setIsLoading] = useState(false)
   const [scoreData, setScoreData] = useState<FinalScore | null>(null)
   const [isVisible, setIsVisible] = useState(false)
+  const [isMinting, setIsMinting] = useState(false)
   const { data: aaveData } = useAaveUserData(isAddress(address) ? (address as `0x${string}`) : undefined)
+  const { address: connectedAddress, isConnected } = useAccount()
+  const { writeContractAsync } = useWriteContract()
+
+  // Check if connected wallet has an NFT
+  const { data: userPosition } = useReadContract({
+    address: LENDING_PROTOCOL_ADDRESS,
+    abi: LENDING_PROTOCOL_ABI,
+    functionName: 'getUserPosition',
+    args: connectedAddress ? [connectedAddress] : undefined,
+    account: connectedAddress,
+  })
+
+  const hasNFT = userPosition && Number(userPosition[2]) > 0
+  const nftId = hasNFT ? Number(userPosition[2]).toString() : null
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -123,6 +164,28 @@ export default function CreditScore() {
       setScoreData(null)
     } finally {
       setIsLoading(false)
+    }
+  }
+
+  const handleMint = async () => {
+    if (!scoreData || !isConnected) return
+
+    try {
+      setIsMinting(true)
+      
+      await writeContractAsync({
+        address: LENDING_PROTOCOL_ADDRESS,
+        abi: LENDING_PROTOCOL_ABI,
+        functionName: 'mintCreditScore',
+        args: [BigInt(scoreData.score)],
+      })
+
+      // You might want to show a success message or redirect
+      console.log('Successfully minted credit score!')
+    } catch (error) {
+      console.error('Error minting credit score:', error)
+    } finally {
+      setIsMinting(false)
     }
   }
 
@@ -472,12 +535,38 @@ export default function CreditScore() {
               className={`text-center pt-16 border-t border-gray-200 fade-in ${isVisible ? "visible" : ""} stagger-3`}
             >
               <h3 className="text-3xl font-light text-ensure-black mb-8 tracking-tight">Ready to mint your score?</h3>
-              <button className="px-12 py-4 bg-black text-white font-medium uppercase tracking-wide hover:bg-gray-800 transition-all hover:scale-105">
-                Mint as SBT
-              </button>
-              <p className="text-sm text-ensure-gray mt-4 font-light">
-                Mint your credit score as a Soul-Bound Token for portable reputation
-              </p>
+              {!isConnected ? (
+                <div className="flex flex-col items-center gap-4">
+                  <ConnectButton />
+                  <p className="text-sm text-ensure-gray font-light">Connect your wallet to mint your credit score</p>
+                </div>
+              ) : hasNFT ? (
+                <div className="flex flex-col items-center gap-4">
+                  <div className="px-12 py-4 bg-green-100 text-green-800 font-medium rounded-lg">
+                    You already have Credit Score NFT #{nftId}
+                  </div>
+                  <p className="text-sm text-ensure-gray font-light">
+                    Your credit score is already minted as a Soul-Bound Token
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <button
+                    onClick={handleMint}
+                    disabled={!scoreData || isMinting}
+                    className={`px-12 py-4 font-medium uppercase tracking-wide transition-all ${
+                      !scoreData || isMinting
+                        ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+                        : "bg-black text-white hover:bg-gray-800 hover:scale-105"
+                    }`}
+                  >
+                    {isMinting ? "Minting..." : "Mint as SBT"}
+                  </button>
+                  <p className="text-sm text-ensure-gray mt-4 font-light">
+                    Mint your credit score as a Soul-Bound Token for portable reputation
+                  </p>
+                </>
+              )}
             </div>
           </div>
         )}

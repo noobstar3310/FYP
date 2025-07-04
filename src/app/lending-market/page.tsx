@@ -8,6 +8,14 @@ import { ConnectButton } from "@rainbow-me/rainbowkit"
 
 // Contract ABIs and addresses
 const LENDING_PROTOCOL_ADDRESS = "0x47E85b70D0DE7529809Fc32ba069fFa4d09aa245"
+const NFT_CONTRACT_ADDRESS = "0x2D80d669e388F88AF877E270d44119FE3452ccD7"
+
+type CreditData = {
+  creditScore: bigint
+  lastUpdated: bigint
+  isCollateralized: boolean
+}
+
 const LENDING_PROTOCOL_ABI = [
   {
     "inputs": [{"internalType": "address","name": "user","type": "address"}],
@@ -76,6 +84,37 @@ const LENDING_PROTOCOL_ABI = [
   }
 ] as const
 
+const NFT_CONTRACT_ABI = [
+  {
+    "inputs": [{"internalType": "address","name": "holder","type": "address"}],
+    "name": "getHolderTokenId",
+    "outputs": [{"internalType": "uint256","name": "","type": "uint256"}],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [{"internalType": "uint256","name": "tokenId","type": "uint256"}],
+    "name": "getCreditData",
+    "outputs": [
+      {"internalType": "uint256","name": "creditScore","type": "uint256"},
+      {"internalType": "uint256","name": "lastUpdated","type": "uint256"},
+      {"internalType": "bool","name": "isCollateralized","type": "bool"}
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {"internalType": "address","name": "to","type": "address"},
+      {"internalType": "uint256","name": "tokenId","type": "uint256"}
+    ],
+    "name": "approve",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  }
+] as const
+
 interface AssetMetrics {
   balance: string
   apy: string
@@ -109,10 +148,12 @@ export default function LendingMarketPage() {
   const [isVisible, setIsVisible] = useState(false)
   const [isSupplyModalOpen, setIsSupplyModalOpen] = useState(false)
   const [isBorrowModalOpen, setIsBorrowModalOpen] = useState(false)
+  const [isRepayModalOpen, setIsRepayModalOpen] = useState(false)
   const [supplyAmount, setSupplyAmount] = useState("")
   const [borrowAmount, setBorrowAmount] = useState("")
   const [isSupplying, setIsSupplying] = useState(false)
   const [isBorrowing, setIsBorrowing] = useState(false)
+  const [isRepaying, setIsRepaying] = useState(false)
   const { address: userAddress, isConnected } = useAccount()
   const { writeContractAsync } = useWriteContract()
 
@@ -129,9 +170,41 @@ export default function LendingMarketPage() {
     args: userAddress ? [userAddress] : undefined,
   })
 
-  const hasNFT = userPosition && Number(userPosition[2]) > 0
-  const nftId = hasNFT ? Number(userPosition[2]).toString() : null
-  const isNFTCollateralized = userPosition && Number(userPosition[1]) > 0
+  // Get user's NFT token ID
+  const { data: holderTokenId } = useReadContract({
+    address: NFT_CONTRACT_ADDRESS,
+    abi: NFT_CONTRACT_ABI,
+    functionName: 'getHolderTokenId',
+    args: userAddress ? [userAddress] : undefined,
+    account: userAddress,
+  })
+
+  // Get NFT credit data if user has a token ID
+  const { data: creditData, refetch: refetchCreditData } = useReadContract({
+    address: NFT_CONTRACT_ADDRESS,
+    abi: NFT_CONTRACT_ABI,
+    functionName: 'getCreditData',
+    args: holderTokenId ? [holderTokenId] : undefined,
+    account: userAddress,
+  })
+
+  // Debug log to check the actual shape of creditData
+  useEffect(() => {
+    if (creditData) {
+      console.log('Credit Data:', creditData)
+      console.log('Credit Data type:', typeof creditData)
+      console.log('Credit Data keys:', Object.keys(creditData))
+    }
+  }, [creditData])
+
+  // Check if user has NFT either in their wallet or collateralized in the lending protocol
+  const hasNFT = holderTokenId && Number(holderTokenId) > 0
+  const hasCollateralizedNFT = userPosition && Number(userPosition[2]) > 0 // creditScoreTokenId from getUserPosition
+  const nftId = hasNFT ? Number(holderTokenId).toString() : 
+               hasCollateralizedNFT ? userPosition[2].toString() : null
+
+  // The contract returns an array where the third element is isCollateralized
+  const isNFTCollateralized = creditData ? Boolean(creditData[2]) : false
 
   // Read available liquidity from the contract
   const { data: availableLiquidity } = useReadContract({
@@ -220,6 +293,11 @@ export default function LendingMarketPage() {
     `${Number(formatEther(BigInt(maxBorrowableAmount))).toFixed(4)} ETH` : 
     "0.0000 ETH"
 
+  // Format user's borrowed amount for display
+  const formattedBorrowed = userPosition ? 
+    `${Number(formatEther(userPosition[0])).toFixed(4)} ETH` : 
+    "0.0000 ETH"
+
   // Debug logging for available liquidity
   useEffect(() => {
     if (availableLiquidity) {
@@ -269,9 +347,21 @@ export default function LendingMarketPage() {
   }
 
   const handleCollateralizeNFT = async () => {
-    if (!hasNFT || !nftId) return
+    if (!hasNFT || !nftId || !userAddress) return
 
     try {
+      // First approve the lending protocol to handle the NFT
+      await writeContractAsync({
+        address: NFT_CONTRACT_ADDRESS,
+        abi: NFT_CONTRACT_ABI,
+        functionName: 'approve',
+        args: [LENDING_PROTOCOL_ADDRESS, BigInt(nftId)],
+      })
+
+      // Wait for approval transaction to be confirmed
+      await new Promise(resolve => setTimeout(resolve, 2000))
+
+      // Then call collateralizeNFT
       await writeContractAsync({
         address: LENDING_PROTOCOL_ADDRESS,
         abi: LENDING_PROTOCOL_ABI,
@@ -279,10 +369,21 @@ export default function LendingMarketPage() {
         args: [BigInt(nftId)],
       })
 
-      // Refetch user position after successful collateralization
+      // Wait for collateralization transaction to be confirmed
+      await new Promise(resolve => setTimeout(resolve, 2000))
+
+      // Refetch data to check if collateralization was successful
+      await refetchCreditData()
       await refetchUserPosition()
+
+      // Update UI based on collateralization status
+      if (creditData && creditData[2]) {
+        console.log('NFT successfully collateralized')
+      } else {
+        console.error('Collateralization failed')
+      }
     } catch (error) {
-      console.error('Error collateralizing NFT:', error)
+      console.error('Error in collateralization process:', error)
     }
   }
 
@@ -329,6 +430,30 @@ export default function LendingMarketPage() {
     }
   }
 
+  const handleRepay = async () => {
+    if (!userAddress || !userPosition?.[0]) return
+
+    try {
+      setIsRepaying(true)
+
+      await writeContractAsync({
+        address: LENDING_PROTOCOL_ADDRESS,
+        abi: LENDING_PROTOCOL_ABI,
+        functionName: 'repay',
+        value: userPosition[0], // Send the exact amount borrowed
+      })
+
+      // Refetch user position after successful repay
+      await refetchUserPosition()
+      
+      setIsRepayModalOpen(false)
+    } catch (error) {
+      console.error('Error repaying ETH:', error)
+    } finally {
+      setIsRepaying(false)
+    }
+  }
+
   const ethMetrics: AssetMetrics = {
     balance: formattedBalance,
     apy: formattedInterestRate,
@@ -336,9 +461,9 @@ export default function LendingMarketPage() {
   }
 
   const ethBorrowPosition: BorrowPosition = {
-    borrowed: "2.5 ETH",
-    variableApy: "3.25%",
-    collateral: "5 ETH"
+    borrowed: formattedBorrowed,
+    variableApy: formattedInterestRate,
+    collateral: formattedCollateral
   }
 
   const ethToBorrow: AssetToBorrow = {
@@ -443,7 +568,7 @@ export default function LendingMarketPage() {
                 <p className="text-gray-600 mb-4">Connect your wallet to view your Credit Score NFT status</p>
                 <ConnectButton />
               </div>
-            ) : !hasNFT ? (
+            ) : (!hasNFT && !hasCollateralizedNFT) ? (
               <div className="text-center">
                 <p className="text-gray-600 mb-4">You don't have a Credit Score NFT yet</p>
                 <a 
@@ -459,23 +584,33 @@ export default function LendingMarketPage() {
                   <div>
                     <h3 className="text-xl font-medium text-black mb-2">Credit Score NFT #{nftId}</h3>
                     <p className="text-gray-600">
-                      Status: {isNFTCollateralized ? (
+                      Status: {hasCollateralizedNFT ? (
+                        <span className="text-green-600 font-medium">Active as Collateral</span>
+                      ) : isNFTCollateralized ? (
                         <span className="text-green-600 font-medium">Active as Collateral</span>
                       ) : (
                         <span className="text-yellow-600 font-medium">Not Collateralized</span>
                       )}
                     </p>
                   </div>
-                  {!isNFTCollateralized && (
-                    <button 
-                      onClick={handleCollateralizeNFT}
-                      className="px-6 py-2 bg-black text-white font-medium uppercase tracking-wide hover:bg-gray-800 transition-colors"
-                    >
-                      Use as Collateral
-                    </button>
+                  {!hasCollateralizedNFT && !isNFTCollateralized && (
+                    <div>
+                      <button 
+                        onClick={handleCollateralizeNFT}
+                        className="px-6 py-2 bg-black text-white font-medium uppercase tracking-wide hover:bg-gray-800 transition-colors relative group"
+                      >
+                        <span className="flex items-center gap-2">
+                          Use as Collateral
+                          <svg className="w-4 h-4 transition-transform group-hover:translate-x-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                          </svg>
+                        </span>
+                      </button>
+                      <p className="text-xs text-gray-500 mt-2">Requires 2 transactions: Approve & Collateralize</p>
+                    </div>
                   )}
                 </div>
-                {isNFTCollateralized && (
+                {(hasCollateralizedNFT || isNFTCollateralized) && (
                   <div className="bg-green-50 border border-green-200 rounded-lg p-4">
                     <div className="flex items-center gap-2 text-green-800">
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
@@ -656,6 +791,51 @@ export default function LendingMarketPage() {
           </div>
         )}
 
+        {/* Repay Modal */}
+        {isRepayModalOpen && (
+          <div className="fixed inset-0 bg-black/20 backdrop-blur-sm flex items-center justify-center z-50">
+            <div className="bg-white w-[400px] rounded-lg shadow-xl">
+              <div className="p-6">
+                <div className="text-center mb-6">
+                  <h3 className="text-xl font-medium text-black mb-2">Repay Your Loan</h3>
+                  <p className="text-gray-600">Amount to repay:</p>
+                  <div className="text-3xl font-light text-black mt-4">{formattedBorrowed}</div>
+                </div>
+
+                {userBalance && userPosition && userBalance.value < userPosition[0] ? (
+                  <div className="mb-6 text-center">
+                    <div className="text-red-600 font-medium mb-2">Insufficient Balance</div>
+                    <div className="text-sm text-gray-600">
+                      Your balance: {formattedBalance}<br />
+                      Required: {formattedBorrowed}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mb-6 text-center text-sm text-gray-600">
+                    Your balance: {formattedBalance}
+                  </div>
+                )}
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setIsRepayModalOpen(false)}
+                    className="flex-1 py-3 border border-gray-300 text-gray-700 font-medium rounded hover:bg-gray-50 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleRepay}
+                    disabled={isRepaying || !userPosition || (userBalance && userBalance.value < userPosition[0])}
+                    className="flex-1 py-3 bg-black text-white font-medium rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-800 transition-colors"
+                  >
+                    {isRepaying ? 'Repaying...' : 'Confirm Repay'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Positions Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-16">
           {/* Borrow Position */}
@@ -666,7 +846,8 @@ export default function LendingMarketPage() {
             </div>
 
             <div className="space-y-8">
-              <div className="grid grid-cols-4 gap-8 items-center py-6 border-b border-gray-200 hover-lift">
+              <div className="grid grid-cols-4 gap-8 items-start py-6 border-b border-gray-200 hover-lift">
+                {/* ETH Logo and Symbol */}
                 <div>
                   <div className="flex items-center gap-2">
                     <EthereumLogo />
@@ -674,23 +855,36 @@ export default function LendingMarketPage() {
                   </div>
                 </div>
 
-                <div className="text-right">
+                {/* Borrowed Amount */}
+                <div className="col-span-2">
                   <div className="text-sm text-gray-600 uppercase tracking-wide mb-1">Borrowed</div>
-                  <div className="text-lg font-light text-black font-mono">{ethBorrowPosition.borrowed}</div>
+                  <div className="text-2xl font-light text-black">{formattedBorrowed}</div>
                 </div>
 
+                {/* APY and Collateral */}
                 <div className="text-right">
                   <div className="text-sm text-gray-600 uppercase tracking-wide mb-1">APY</div>
-                  <div className="text-lg font-light text-black">{ethBorrowPosition.variableApy}</div>
-                  <div className="text-xs text-gray-500 mt-1">Collateral: {ethBorrowPosition.collateral}</div>
-                </div>
-
-                <div className="text-right">
-                  <button className="px-6 py-2 border border-gray-400 text-gray-600 font-medium uppercase tracking-wide text-sm hover:bg-gray-600 hover:text-white transition-colors">
-                    Repay
-                  </button>
+                  <div className="text-2xl font-light text-black">{formattedInterestRate}</div>
+                  <div className="text-sm text-gray-500 mt-1">
+                    Collateral: {formattedCollateral}
+                  </div>
                 </div>
               </div>
+
+              {/* Repay Button Section */}
+              {Number(userPosition?.[0]) > 0 && (
+                <div>
+                  <button 
+                    onClick={() => setIsRepayModalOpen(true)}
+                    className="w-full py-4 bg-black text-white font-medium uppercase tracking-wide hover:bg-gray-800 transition-colors rounded-lg"
+                  >
+                    REPAY
+                  </button>
+                  <p className="text-sm text-gray-500 mt-2 text-center">
+                    Current borrowed amount: {formattedBorrowed}
+                  </p>
+                </div>
+              )}
             </div>
           </div>
 
@@ -702,7 +896,8 @@ export default function LendingMarketPage() {
             </div>
 
             <div className="space-y-8">
-              <div className="grid grid-cols-4 gap-8 items-center py-6 border-b border-gray-200 hover-lift">
+              <div className="grid grid-cols-4 gap-8 items-start py-6 border-b border-gray-200 hover-lift">
+                {/* ETH Logo and Symbol */}
                 <div>
                   <div className="flex items-center gap-2">
                     <EthereumLogo />
@@ -710,25 +905,30 @@ export default function LendingMarketPage() {
                   </div>
                 </div>
 
-                <div className="text-right">
+                {/* Available Amount */}
+                <div className="col-span-2">
                   <div className="text-sm text-gray-600 uppercase tracking-wide mb-1">Available</div>
-                  <div className="text-lg font-light text-black font-mono">{formattedAvailableLiquidity}</div>
+                  <div className="text-2xl font-light text-black">{formattedAvailableLiquidity}</div>
                 </div>
 
+                {/* Variable APY and Max Borrowable */}
                 <div className="text-right">
                   <div className="text-sm text-gray-600 uppercase tracking-wide mb-1">Variable APY</div>
-                  <div className="text-lg font-light text-black">{ethToBorrow.variableApy}</div>
-                  <div className="text-xs text-gray-500 mt-1">Max Borrowable: {formattedMaxBorrowable}</div>
+                  <div className="text-2xl font-light text-black">{formattedInterestRate}</div>
+                  <div className="text-sm text-gray-500 mt-1">
+                    Max Borrowable: {formattedMaxBorrowable}
+                  </div>
                 </div>
+              </div>
 
-                <div className="text-right">
-                  <button 
-                    onClick={() => setIsBorrowModalOpen(true)}
-                    className="px-6 py-2 border border-black text-black font-medium uppercase tracking-wide text-sm hover:bg-black hover:text-white transition-colors"
-                  >
-                    Borrow
-                  </button>
-                </div>
+              {/* Borrow Button Section */}
+              <div>
+                <button 
+                  onClick={() => setIsBorrowModalOpen(true)}
+                  className="w-full py-4 bg-black text-white font-medium uppercase tracking-wide hover:bg-gray-800 transition-colors rounded-lg"
+                >
+                  BORROW
+                </button>
               </div>
             </div>
           </div>

@@ -10,7 +10,7 @@ import { calculateErc20Score } from "../utils/erc20-holdings/calculateErc20Score
 import { getWalletAge } from "../utils/wallet-age-and-activity/getWalletAge"
 import { calculateWalletAgeScore } from "../utils/wallet-age-and-activity/calculateWalletAgeScore"
 import { getParticipationScore } from "../utils/participation/getParticipationScore"
-import { useAccount } from "wagmi"
+import { useAccount, useWriteContract } from "wagmi"
 import { ConnectButton } from "@rainbow-me/rainbowkit"
 
 type FinalScore = {
@@ -68,12 +68,28 @@ function calculateFinalScore(
   }
 }
 
+// Use lending protocol contract address
+const LENDING_PROTOCOL_ADDRESS = "0x47E85b70D0DE7529809Fc32ba069fFa4d09aa245"
+
+// Add lending protocol contract ABI for mint function
+const LENDING_PROTOCOL_ABI = [
+  {
+    "inputs": [{"internalType": "uint256","name": "score","type": "uint256"}],
+    "name": "mintCreditScore",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  }
+] as const
+
 export default function CreditScore() {
   const { address, isConnected } = useAccount()
   const [isLoading, setIsLoading] = useState(false)
+  const [isMinting, setIsMinting] = useState(false)
   const [scoreData, setScoreData] = useState<FinalScore | null>(null)
   const [isVisible, setIsVisible] = useState(false)
   const { data: aaveData } = useAaveUserData(isConnected ? (address as `0x${string}`) : undefined)
+  const { writeContractAsync } = useWriteContract()
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -132,6 +148,28 @@ export default function CreditScore() {
       setScoreData(null)
     } finally {
       setIsLoading(false)
+    }
+  }
+
+  const handleMint = async () => {
+    if (!scoreData || !address) return
+
+    try {
+      setIsMinting(true)
+      
+      await writeContractAsync({
+        address: LENDING_PROTOCOL_ADDRESS,
+        abi: LENDING_PROTOCOL_ABI,
+        functionName: 'mintCreditScore',
+        args: [BigInt(Math.round(scoreData.score))],
+      })
+
+      // Show success message or handle post-mint actions
+      console.log('Successfully minted credit score NFT')
+    } catch (error) {
+      console.error('Error minting credit score:', error)
+    } finally {
+      setIsMinting(false)
     }
   }
 
@@ -475,8 +513,12 @@ export default function CreditScore() {
               className={`text-center pt-16 border-t border-gray-200 fade-in ${isVisible ? "visible" : ""} stagger-3`}
             >
               <h3 className="text-3xl font-light text-ensure-black mb-8 tracking-tight">Ready to mint your score?</h3>
-              <button className="px-12 py-4 bg-black text-white font-medium uppercase tracking-wide hover:bg-gray-800 transition-all hover:scale-105">
-                Mint as SBT
+              <button 
+                onClick={handleMint}
+                disabled={isMinting || !scoreData}
+                className="px-12 py-4 bg-black text-white font-medium uppercase tracking-wide hover:bg-gray-800 transition-all hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
+              >
+                {isMinting ? 'Minting...' : 'Mint as SBT'}
               </button>
               <p className="text-sm text-ensure-gray mt-4 font-light">
                 Mint your credit score as a Soul-Bound Token for portable reputation
