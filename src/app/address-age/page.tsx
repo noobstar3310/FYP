@@ -133,44 +133,7 @@ export default function AddressAge() {
             </div>
 
             {/* Score Components */}
-            <div>
-              <h3 className="text-2xl font-light text-gray-300 mb-12">SCORE COMPONENTS</h3>
-              <div className="grid grid-cols-4 gap-12">
-                <div>
-                  <div className="text-lg text-gray-600 mb-2">WALLET AGE</div>
-                  <div className="text-6xl font-light text-gray-900 mb-2">
-                    {Math.round(walletScore * 0.4)}
-                  </div>
-                  <div className="text-base text-gray-500 mb-1">40% Weight</div>
-                  <div className="text-sm text-gray-500">
-                    Age: {walletData?.active_chains[0]?.first_transaction ? 
-                      formatDate(walletData.active_chains[0].first_transaction.block_timestamp) : 
-                      'N/A'}
-                  </div>
-                </div>
-
-                <div>
-                  <div className="text-lg text-gray-600 mb-2">TRANSACTION VOLUME</div>
-                  <div className="text-6xl font-light text-gray-900 mb-2">0</div>
-                  <div className="text-base text-gray-500 mb-1">30% Weight</div>
-                  <div className="text-sm text-gray-500">Volume: 0.00%</div>
-                </div>
-
-                <div>
-                  <div className="text-lg text-gray-600 mb-2">ACTIVITY FREQUENCY</div>
-                  <div className="text-6xl font-light text-gray-900 mb-2">5</div>
-                  <div className="text-base text-gray-500 mb-1">20% Weight</div>
-                  <div className="text-sm text-gray-500">$0.00</div>
-                </div>
-
-                <div>
-                  <div className="text-lg text-gray-600 mb-2">NETWORK DIVERSITY</div>
-                  <div className="text-6xl font-light text-gray-900 mb-2">0</div>
-                  <div className="text-base text-gray-500 mb-1">10% Weight</div>
-                  <div className="text-sm text-gray-500">Ratio: NaN</div>
-                </div>
-              </div>
-            </div>
+            
           </div>
         )}
 

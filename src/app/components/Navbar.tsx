@@ -8,21 +8,37 @@ import { useState } from "react"
 const Navbar = () => {
   const pathname = usePathname()
   const [isMenuOpen, setIsMenuOpen] = useState(false)
+  const [activeDropdown, setActiveDropdown] = useState<string | null>(null)
 
   const isActive = (path: string) => {
     return pathname === path
   }
 
   const navigation = [
-    { name: "Lending Market", href: "/lending-market" },
-    { name: "Credit Score", href: "/finalized-score" },
-    { name: "Address Age", href: "/address-age" },
-    { name: "ERC-20 Holdings", href: "/erc-20-holdings" },
-    { name: "Participation", href: "/participation" }
+    {
+      name: "Market",
+      href: "/lending-market",
+    },
+    {
+      name: "Credit Score",
+      items: [
+        { name: "Overview", href: "/finalized-score" },
+        { name: "Manual Score", href: "/credit-score" },
+      ]
+    },
+    {
+      name: "Analysis",
+      items: [
+        { name: "Address Age", href: "/address-age" },
+        { name: "ERC-20 Holdings", href: "/erc-20-holdings" },
+        { name: "DeFi Participation", href: "/participation" },
+        { name: "AAVE Positions", href: "/aave-positions" },
+      ]
+    }
   ]
 
   return (
-    <nav className="border-b border-gray-200 bg-white">
+    <nav className="border-b border-gray-200 bg-white relative z-50">
       <style jsx>{`
         .nav-link {
           position: relative;
@@ -53,6 +69,20 @@ const Navbar = () => {
         }
 
         .mobile-menu.open {
+          opacity: 1;
+          transform: translateY(0);
+          pointer-events: auto;
+        }
+
+        .dropdown-menu {
+          opacity: 0;
+          transform: translateY(-10px);
+          transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+          pointer-events: none;
+          z-index: 50;
+        }
+
+        .dropdown-menu.open {
           opacity: 1;
           transform: translateY(0);
           pointer-events: auto;
@@ -126,15 +156,53 @@ const Navbar = () => {
           {/* Desktop Navigation */}
           <div className="hidden md:flex items-center space-x-8">
             {navigation.map((item) => (
-              <Link
-                key={item.name}
-                href={item.href}
-                className={`nav-link text-sm font-medium uppercase tracking-widest transition-colors pb-1 ${
-                  isActive(item.href) ? "text-black active" : "text-gray-500 hover:text-black"
-                }`}
-              >
-                {item.name}
-              </Link>
+              <div key={item.name} className="relative">
+                {item.href ? (
+                  // Single link
+                  <Link
+                    href={item.href}
+                    className={`nav-link text-sm font-medium uppercase tracking-widest transition-colors pb-1 ${
+                      isActive(item.href) ? "text-black active" : "text-gray-500 hover:text-black"
+                    }`}
+                  >
+                    {item.name}
+                  </Link>
+                ) : (
+                  // Dropdown
+                  <div
+                    className="relative"
+                    onMouseEnter={() => setActiveDropdown(item.name)}
+                    onMouseLeave={() => setActiveDropdown(null)}
+                  >
+                    <button
+                      className={`nav-link text-sm font-medium uppercase tracking-widest transition-colors pb-1 ${
+                        item.items?.some(subItem => isActive(subItem.href)) ? "text-black active" : "text-gray-500 hover:text-black"
+                      }`}
+                    >
+                      {item.name}
+                    </button>
+                    <div
+                      className={`dropdown-menu absolute top-full left-0 mt-1 py-2 bg-white border border-gray-200 rounded-lg shadow-lg min-w-[200px] ${
+                        activeDropdown === item.name ? "open" : ""
+                      }`}
+                    >
+                      {item.items?.map((subItem) => (
+                        <Link
+                          key={subItem.name}
+                          href={subItem.href}
+                          className={`block px-4 py-2 text-sm transition-colors ${
+                            isActive(subItem.href)
+                              ? "text-black bg-gray-50"
+                              : "text-gray-500 hover:text-black hover:bg-gray-50"
+                          }`}
+                        >
+                          {subItem.name}
+                        </Link>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
             ))}
           </div>
 
@@ -215,16 +283,37 @@ const Navbar = () => {
             {/* Mobile Navigation */}
             <div className="space-y-4">
               {navigation.map((item) => (
-                <Link
-                  key={item.name}
-                  href={item.href}
-                  onClick={() => setIsMenuOpen(false)}
-                  className={`block text-lg font-light tracking-wide transition-colors ${
-                    isActive(item.href) ? "text-black" : "text-gray-500 hover:text-black"
-                  }`}
-                >
-                  {item.name}
-                </Link>
+                <div key={item.name}>
+                  {item.href ? (
+                    <Link
+                      href={item.href}
+                      onClick={() => setIsMenuOpen(false)}
+                      className={`block text-lg font-light tracking-wide transition-colors ${
+                        isActive(item.href) ? "text-black" : "text-gray-500 hover:text-black"
+                      }`}
+                    >
+                      {item.name}
+                    </Link>
+                  ) : (
+                    <div className="space-y-2">
+                      <div className="text-sm font-medium uppercase tracking-widest text-gray-400">
+                        {item.name}
+                      </div>
+                      {item.items?.map((subItem) => (
+                        <Link
+                          key={subItem.name}
+                          href={subItem.href}
+                          onClick={() => setIsMenuOpen(false)}
+                          className={`block text-lg font-light tracking-wide transition-colors pl-4 ${
+                            isActive(subItem.href) ? "text-black" : "text-gray-500 hover:text-black"
+                          }`}
+                        >
+                          {subItem.name}
+                        </Link>
+                      ))}
+                    </div>
+                  )}
+                </div>
               ))}
             </div>
 

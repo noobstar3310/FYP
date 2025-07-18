@@ -34,7 +34,7 @@ export type UserAccountData = {
 // Create a public client specifically for mainnet
 const mainnetClient = createPublicClient({
   chain: mainnet,
-  transport: http('https://eth-mainnet.g.alchemy.com/v2/demo') // Using Alchemy's demo endpoint - replace with your own RPC URL
+  transport: http('https://eth-mainnet.g.alchemy.com/v2/Chp3sLtAWI2CAe3S7ws_uMZLoh1d8DQJ') // Using Alchemy's demo endpoint - replace with your own RPC URL
 });
 
 export function useAaveUserData(userAddress: Address | undefined) {

@@ -47,7 +47,7 @@ export default function Home() {
     <div className="min-h-screen bg-white relative">
       <GridBackground />
       <FloatingShapes />
-      <main className="max-w-7xl mx-auto px-6 relative">
+      <main className="max-w-7xl mx-auto px-6 relative z-0">
         {/* Hero Section */}
         <section className="pt-32 pb-24">
           <motion.div 
