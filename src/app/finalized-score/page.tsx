@@ -4,11 +4,14 @@ import { useState, useEffect } from "react"
 import { useAaveUserData } from "../utils/aave-positions/read-aave"
 import { calculateCreditScore } from "../utils/aave-positions/calculate-credit-score"
 import { isAddress } from "viem"
+import { useAccount, useWriteContract } from "wagmi"
+import { LENDING_PROTOCOL_ADDRESS, NFT_CONTRACT_ADDRESS, LENDING_PROTOCOL_ABI, NFT_CONTRACT_ABI } from "../constants/contracts"
 import { getErc20Holdings } from "../utils/erc20-holdings/getErc20Holdings"
 import { calculateErc20Score } from "../utils/erc20-holdings/calculateErc20Score"
 import { getWalletAge } from "../utils/wallet-age-and-activity/getWalletAge"
 import { calculateWalletAgeScore } from "../utils/wallet-age-and-activity/calculateWalletAgeScore"
-import { getParticipationScore } from "../utils/participation/getParticipationScore"
+import { getDefiPositions, type DefiPosition } from "../utils/wallet-defi-activities/get-defi-positions"
+import { calculateDefiCreditScore } from "../utils/wallet-defi-activities/defi-position-credit-score"
 
 type FinalScore = {
   score: number
@@ -68,6 +71,10 @@ function calculateFinalScore(
 export default function FinalizedScore() {
   const [address, setAddress] = useState("")
   const [isLoading, setIsLoading] = useState(false)
+  const [isMinting, setIsMinting] = useState(false)
+  const [mintingError, setMintingError] = useState<string | null>(null)
+  const { address: userAddress, isConnected } = useAccount()
+  const { writeContractAsync } = useWriteContract()
   const [finalScoreData, setFinalScoreData] = useState<FinalScore | null>(null)
   const { data: aaveData, error: aaveError } = useAaveUserData(isAddress(address) ? (address as `0x${string}`) : undefined)
 
@@ -145,25 +152,87 @@ export default function FinalizedScore() {
 
       // DeFi Participation Score
       console.group("DeFi Participation")
-      const participationData = await getParticipationScore(address)
-      if (participationData) {
-        participationScore = participationData.score
-        console.log("Participation Score:", participationScore)
-      } else {
-        console.log("No participation data found")
+      try {
+        const defiPositions = await getDefiPositions(address)
+        console.log("Raw DeFi Positions:", defiPositions)
+
+        if (defiPositions && defiPositions.length > 0) {
+          // Log each position's details
+          defiPositions.forEach((position, index) => {
+            console.group(`Position ${index + 1}: ${position.protocol_name}`)
+            console.log("Protocol:", {
+              name: position.protocol_name,
+              id: position.protocol_id,
+              url: position.protocol_url
+            })
+            console.log("Position Type:", position.position.label)
+            console.log("Balance USD:", position.position.balance_usd)
+            console.log("Tokens:", position.position.tokens)
+            if (position.position.position_details) {
+              console.log("Position Details:", position.position.position_details)
+            }
+            console.groupEnd()
+          })
+
+          // Calculate and log score
+          const defiScore = calculateDefiCreditScore(defiPositions)
+          console.group("DeFi Score Breakdown")
+          console.log("Number of Unique Protocols:", defiScore.calculations.uniqueProtocols)
+          console.log("Protocol Diversity Score:", defiScore.protocolDiversityScore, "/ 40")
+          console.log("Number of Unique Activities:", defiScore.calculations.uniqueActivities)
+          console.log("Activity Types Score:", defiScore.activityTypesScore, "/ 40")
+          console.log("Total Value USD:", new Intl.NumberFormat('en-US', {
+            style: 'currency',
+            currency: 'USD'
+          }).format(defiScore.calculations.totalValueUSD))
+          console.log("Total Value Score:", defiScore.totalValueScore, "/ 20")
+          console.log("Final DeFi Score:", defiScore.totalScore)
+          console.log("Risk Grade:", defiScore.riskGrade)
+          console.groupEnd()
+
+          participationScore = defiScore.totalScore
+        } else {
+          console.log("No DeFi positions found")
+          participationScore = 0
+        }
+      } catch (error) {
+        console.error("Error fetching DeFi positions:", error)
+        participationScore = 0
       }
       console.groupEnd()
 
       // ERC20 Holdings Score
       console.group("ERC20 Holdings")
-      const holdings = await getErc20Holdings(address)
-      if (holdings && holdings.holdings.length > 0) {
-        const erc20Result = calculateErc20Score(holdings.holdings)
-        erc20Score = erc20Result.score
-        console.log("Number of tokens:", holdings.holdings.length)
-        console.log("ERC20 Score:", erc20Score)
-      } else {
-        console.log("No ERC20 holdings found")
+      try {
+        const holdings = await getErc20Holdings(address)
+        console.log("Raw ERC20 Holdings Response:", holdings)
+
+        if (holdings && holdings.holdings.length > 0) {
+          // Log each token's details
+          console.group("Token Details")
+          holdings.holdings.forEach((token, index) => {
+            console.group(`Token ${index + 1}: ${token.symbol || 'Unknown Token'}`)
+            console.log("Token Data:", token)  // Log the entire token object
+            console.groupEnd()
+          })
+          console.groupEnd()
+
+          const erc20Result = calculateErc20Score(holdings.holdings)
+          console.group("ERC20 Score Calculation")
+          console.log("Number of tokens:", holdings.holdings.length)
+          console.log("Raw Holdings Data:", holdings.holdings)
+          console.log("ERC20 Score:", erc20Result.score)
+          console.log("Score Calculation Details:", erc20Result)
+          console.groupEnd()
+
+          erc20Score = erc20Result.score
+        } else {
+          console.log("No ERC20 holdings found")
+          erc20Score = 0
+        }
+      } catch (error) {
+        console.error("Error fetching ERC20 holdings:", error)
+        erc20Score = 0
       }
       console.groupEnd()
 
@@ -180,6 +249,36 @@ export default function FinalizedScore() {
       console.error("Error calculating scores:", error)
     } finally {
       setIsLoading(false)
+    }
+  }
+
+  const handleMintCreditScore = async () => {
+    if (!finalScoreData || !isConnected || userAddress !== address) return
+    
+    setIsMinting(true)
+    setMintingError(null)
+
+    try {
+      // Convert the final score to a uint256 by rounding to the nearest integer
+      const scoreForContract = BigInt(Math.round(finalScoreData.score))
+      
+      // Debug logs
+      console.log('Original Score:', finalScoreData.score)
+      console.log('Score for contract (uint256):', scoreForContract.toString())
+
+      await writeContractAsync({
+        address: LENDING_PROTOCOL_ADDRESS,
+        abi: LENDING_PROTOCOL_ABI,
+        functionName: 'mintCreditScore',
+        args: [scoreForContract],
+      })
+
+      // You might want to add a success message or redirect here
+    } catch (error) {
+      console.error('Error minting credit score:', error)
+      setMintingError('Failed to mint credit score. Please try again.')
+    } finally {
+      setIsMinting(false)
     }
   }
 
@@ -236,53 +335,15 @@ export default function FinalizedScore() {
 
         {finalScoreData && (
           <div className="space-y-12">
-            {/* Raw Position Data */}
-            <section>
-              <h2 className="text-2xl font-light text-gray-900 mb-6">AAVE Position Data</h2>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="bg-white p-6 rounded-lg border border-gray-200 shadow-sm">
-                  <div className="text-sm text-gray-700 font-medium mb-2">Total Collateral</div>
-                  <div className="text-2xl font-light text-gray-900">{formatUSD(Number(aaveData![0]) / 1e8)}</div>
-                </div>
-                <div className="bg-white p-6 rounded-lg border border-gray-200 shadow-sm">
-                  <div className="text-sm text-gray-700 font-medium mb-2">Total Debt</div>
-                  <div className="text-2xl font-light text-gray-900">{formatUSD(Number(aaveData![1]) / 1e8)}</div>
-                </div>
-                <div className="bg-white p-6 rounded-lg border border-gray-200 shadow-sm">
-                  <div className="text-sm text-gray-700 font-medium mb-2">Available Borrows</div>
-                  <div className="text-2xl font-light text-gray-900">{formatUSD(Number(aaveData![2]) / 1e8)}</div>
-                </div>
-              </div>
-            </section>
-
-            {/* Risk Metrics */}
-            <section>
-              <h2 className="text-2xl font-light text-gray-900 mb-6">Risk Metrics</h2>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="bg-white p-6 rounded-lg border border-gray-200 shadow-sm">
-                  <div className="text-sm text-gray-700 font-medium mb-2">Health Factor</div>
-                  <div className="text-2xl font-light text-gray-900">{formatNumber(aaveScore!.calculations.healthFactor)}</div>
-                </div>
-                <div className="bg-white p-6 rounded-lg border border-gray-200 shadow-sm">
-                  <div className="text-sm text-gray-700 font-medium mb-2">LTV Margin</div>
-                  <div className="text-2xl font-light text-gray-900">{formatNumber(aaveScore!.calculations.ltvMargin * 100)}%</div>
-                </div>
-                <div className="bg-white p-6 rounded-lg border border-gray-200 shadow-sm">
-                  <div className="text-sm text-gray-700 font-medium mb-2">Borrow Ratio</div>
-                  <div className="text-2xl font-light text-gray-900">{formatNumber(aaveScore!.calculations.borrowRatio * 100)}%</div>
-                </div>
-              </div>
-            </section>
-
             {/* Final Score */}
             <section>
               <h2 className="text-2xl font-light text-gray-900 mb-6">Final Credit Score</h2>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
                 {/* Score Overview */}
-                <div className="bg-white p-8 rounded-lg border border-gray-200 shadow-sm">
-                  <div className="text-center mb-8">
-                    <div className="text-8xl font-light text-gray-900 mb-4">{finalScoreData.score}</div>
-                    <div className="text-xl text-gray-700">Total Score</div>
+                <div className="bg-white p-8 rounded-lg border border-gray-200 shadow-sm flex flex-col justify-center items-center min-h-[300px]">
+                  <div className="text-center">
+                    <div className="text-8xl font-light text-gray-900 mb-6">{finalScoreData.score}</div>
+                    <div className="text-xl text-gray-600 font-medium tracking-wide">Total Score</div>
                   </div>
                 </div>
 
@@ -373,6 +434,67 @@ export default function FinalizedScore() {
                 </div>
               </div>
             </div>
+
+            {/* Minting Section */}
+            <section className="pt-8 border-t border-gray-200">
+              <div className="max-w-2xl mx-auto text-center">
+                <h3 className="text-2xl font-light text-gray-900 mb-4">Mint Your Credit Score NFT</h3>
+                <p className="text-gray-600 mb-8">
+                  Turn your credit score into a unique NFT that can be used as collateral in the lending protocol.
+                </p>
+                
+                {!isConnected ? (
+                  <div className="bg-gray-50 p-6 rounded-lg border border-gray-200 mb-6">
+                    <p className="text-gray-700 mb-4">Connect your wallet to mint your credit score NFT</p>
+                  </div>
+                ) : userAddress !== address ? (
+                  <div className="bg-red-50 p-6 rounded-lg border border-red-200 mb-6">
+                    <div className="flex items-center gap-2 justify-center mb-2">
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-red-500" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                      </svg>
+                      <span className="font-medium text-red-700">Address Mismatch</span>
+                    </div>
+                    <p className="text-red-700">
+                      The address you're checking ({address}) doesn't match your connected wallet ({userAddress}).
+                      To mint an NFT, please either:
+                    </p>
+                    <ul className="text-red-700 mt-2 text-sm">
+                      <li>• Connect the wallet matching the address you're checking, or</li>
+                      <li>• Enter your connected wallet's address above</li>
+                    </ul>
+                  </div>
+                ) : null}
+
+                <button
+                  onClick={handleMintCreditScore}
+                  disabled={!isConnected || isMinting || userAddress !== address}
+                  className="px-8 py-4 bg-black text-white font-medium rounded-lg disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+                >
+                  {isMinting ? (
+                    <span className="flex items-center gap-2 justify-center">
+                      <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                      Minting...
+                    </span>
+                  ) : !isConnected ? (
+                    "Connect Wallet to Mint"
+                  ) : userAddress !== address ? (
+                    "Address Mismatch - Cannot Mint"
+                  ) : (
+                    "Mint Credit Score NFT"
+                  )}
+                </button>
+
+                {mintingError && (
+                  <div className="mt-4 p-4 bg-red-50 text-red-700 rounded-lg border border-red-200">
+                    {mintingError}
+                  </div>
+                )}
+              </div>
+            </section>
           </div>
         )}
       </div>
