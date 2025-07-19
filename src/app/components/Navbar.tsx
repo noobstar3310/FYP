@@ -21,10 +21,7 @@ const Navbar = () => {
     },
     {
       name: "Credit Score",
-      items: [
-        { name: "Overview", href: "/finalized-score" },
-        { name: "Manual Score", href: "/credit-score" },
-      ]
+      href: "/finalized-score",
     },
     {
       name: "Analysis",
@@ -32,7 +29,7 @@ const Navbar = () => {
         { name: "Address Age", href: "/address-age" },
         { name: "ERC-20 Holdings", href: "/erc-20-holdings" },
         { name: "DeFi Participation", href: "/participation" },
-        { name: "AAVE Positions", href: "/aave-positions" },
+        { name: "AAVE Positions", href: "/raw-aave" },
       ]
     }
   ]
@@ -172,7 +169,12 @@ const Navbar = () => {
                   <div
                     className="relative"
                     onMouseEnter={() => setActiveDropdown(item.name)}
-                    onMouseLeave={() => setActiveDropdown(null)}
+                    onMouseLeave={(e) => {
+                      // Add a delay before closing the dropdown
+                      setTimeout(() => {
+                        setActiveDropdown(null);
+                      }, 1000);
+                    }}
                   >
                     <button
                       className={`nav-link text-sm font-medium uppercase tracking-widest transition-colors pb-1 ${

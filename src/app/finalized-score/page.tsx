@@ -4,7 +4,7 @@ import { useState, useEffect } from "react"
 import { useAaveUserData } from "../utils/aave-positions/read-aave"
 import { calculateCreditScore } from "../utils/aave-positions/calculate-credit-score"
 import { isAddress } from "viem"
-import { useAccount, useWriteContract } from "wagmi"
+import { useAccount, useWriteContract, useReadContract } from "wagmi"
 import { LENDING_PROTOCOL_ADDRESS, NFT_CONTRACT_ADDRESS, LENDING_PROTOCOL_ABI, NFT_CONTRACT_ABI } from "../constants/contracts"
 import { getErc20Holdings } from "../utils/erc20-holdings/getErc20Holdings"
 import { calculateErc20Score } from "../utils/erc20-holdings/calculateErc20Score"
@@ -78,6 +78,56 @@ export default function FinalizedScore() {
   const [finalScoreData, setFinalScoreData] = useState<FinalScore | null>(null)
   const { data: aaveData, error: aaveError } = useAaveUserData(isAddress(address) ? (address as `0x${string}`) : undefined)
 
+  // Add NFT balance check
+  const { data: nftBalance } = useReadContract({
+    address: NFT_CONTRACT_ADDRESS,
+    abi: NFT_CONTRACT_ABI,
+    functionName: 'getHolderTokenId',
+    args: userAddress ? [userAddress as `0x${string}`] : undefined,
+  })
+
+  // Add user position check from lending protocol
+  const { data: userPosition } = useReadContract({
+    address: LENDING_PROTOCOL_ADDRESS,
+    abi: LENDING_PROTOCOL_ABI,
+    functionName: 'getUserPosition',
+    args: userAddress ? [userAddress as `0x${string}`] : undefined,
+  })
+
+  // Get credit score details if user has NFT
+  const { data: creditScoreDetails } = useReadContract({
+    address: NFT_CONTRACT_ADDRESS,
+    abi: NFT_CONTRACT_ABI,
+    functionName: 'creditScores',
+    args: userPosition && userPosition[2] ? [userPosition[2]] : undefined,
+  })
+
+  // Convert BigInt to number for comparison
+  const nftTokenId = nftBalance ? Number(nftBalance) : 0
+  const creditTokenId = userPosition ? Number(userPosition[2]) : 0
+  
+  // Check if NFT is collateralized
+  const isNFTCollateralized = creditScoreDetails ? Boolean(creditScoreDetails[2]) : false
+
+  // Check if user can mint
+  const hasNoNFT = nftTokenId === 0 && creditTokenId === 0
+  const hasNoActivePosition = !isNFTCollateralized
+  const canMint = isConnected && 
+                  userAddress === address && 
+                  !isMinting && 
+                  hasNoNFT && 
+                  hasNoActivePosition
+
+  useEffect(() => {
+    if (creditScoreDetails) {
+      console.log('Credit Score Details:', {
+        score: Number(creditScoreDetails[0]),
+        lastUpdated: Number(creditScoreDetails[1]),
+        isCollateralized: Boolean(creditScoreDetails[2])
+      })
+    }
+  }, [creditScoreDetails])
+
   // Format number with scientific notation if needed
   const formatNumber = (value: number) => {
     if (value >= 1000) {
@@ -139,14 +189,20 @@ export default function FinalizedScore() {
 
       // Wallet Age Score
       console.group("Wallet Age")
-      const walletData = await getWalletAge(address)
-      if (walletData && walletData.active_chains.length > 0) {
-        const firstTransaction = walletData.active_chains[0].first_transaction.block_timestamp
-        walletAgeScore = calculateWalletAgeScore(firstTransaction)
-        console.log("First Transaction:", new Date(firstTransaction).toLocaleDateString())
-        console.log("Wallet Age Score:", walletAgeScore)
-      } else {
-        console.log("No wallet age data found")
+      try {
+        const walletData = await getWalletAge(address)
+        if (walletData && walletData.active_chains && walletData.active_chains.length > 0 && walletData.active_chains[0].first_transaction) {
+          const firstTransaction = walletData.active_chains[0].first_transaction.block_timestamp
+          walletAgeScore = calculateWalletAgeScore(firstTransaction)
+          console.log("First Transaction:", new Date(firstTransaction).toLocaleDateString())
+          console.log("Wallet Age Score:", walletAgeScore)
+        } else {
+          console.log("No wallet age data found or wallet is new")
+          walletAgeScore = 0
+        }
+      } catch (error) {
+        console.error("Error fetching wallet age:", error)
+        walletAgeScore = 0
       }
       console.groupEnd()
 
@@ -265,7 +321,7 @@ export default function FinalizedScore() {
       // Debug logs
       console.log('Original Score:', finalScoreData.score)
       console.log('Score for contract (uint256):', scoreForContract.toString())
-
+      
       await writeContractAsync({
         address: LENDING_PROTOCOL_ADDRESS,
         abi: LENDING_PROTOCOL_ABI,
@@ -464,11 +520,24 @@ export default function FinalizedScore() {
                       <li>• Enter your connected wallet's address above</li>
                     </ul>
                   </div>
+                ) : nftTokenId > 0 || creditTokenId > 0 ? (
+                  <div className="bg-yellow-50 p-6 rounded-lg border border-yellow-200 mb-6">
+                    <div className="flex items-center gap-2 justify-center mb-2">
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-yellow-500" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                      </svg>
+                      <span className="font-medium text-yellow-800">NFT Already Owned</span>
+                    </div>
+                    <p className="text-yellow-800">
+                      You already own a credit score NFT{isNFTCollateralized ? " and it is currently being used as collateral" : ""}.
+                      You cannot mint another one until you {isNFTCollateralized ? "complete your lending position" : "burn or transfer your existing NFT"}.
+                    </p>
+                  </div>
                 ) : null}
 
                 <button
                   onClick={handleMintCreditScore}
-                  disabled={!isConnected || isMinting || userAddress !== address}
+                  disabled={!canMint}
                   className="px-8 py-4 bg-black text-white font-medium rounded-lg disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
                 >
                   {isMinting ? (
@@ -483,6 +552,8 @@ export default function FinalizedScore() {
                     "Connect Wallet to Mint"
                   ) : userAddress !== address ? (
                     "Address Mismatch - Cannot Mint"
+                  ) : nftTokenId > 0 || creditTokenId > 0 ? (
+                    isNFTCollateralized ? "NFT In Use as Collateral" : "Already Own NFT"
                   ) : (
                     "Mint Credit Score NFT"
                   )}
